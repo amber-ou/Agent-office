@@ -10,6 +10,7 @@ interface ModalProps {
   /** z-index for backdrop (modal gets +1). Default 49 */
   zIndex?: number;
   className?: string;
+  titleClassName?: string;
 }
 
 export function Modal({
@@ -19,6 +20,7 @@ export function Modal({
   children,
   zIndex = 50,
   className = '',
+  titleClassName = 'text-2xl',
 }: ModalProps) {
   if (!isOpen) return null;
 
@@ -30,7 +32,7 @@ export function Modal({
         style={{ zIndex: zIndex + 1 }}
       >
         <div className="flex items-center justify-between py-4 px-10 border-b border-border mb-4">
-          <span className="text-accent-bright text-2xl">{title}</span>
+          <span className={`text-accent-bright ${titleClassName}`}>{title}</span>
           <Button variant="ghost" size="icon" onClick={onClose}>
             x
           </Button>

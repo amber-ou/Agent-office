@@ -274,7 +274,7 @@ export function renderAreaLabels(
   const fontSize = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
 
   ctx.save();
-  ctx.font = `bold ${fontSize}px 'FS Pixel Sans'`;
+  ctx.font = `bold ${fontSize}px 'Poppins', 'Noto Sans TC', sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 

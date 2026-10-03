@@ -27,7 +27,7 @@ interface DiscoverySettingsProps {
   onSave: (config: DiscoveryConfig) => void;
 }
 
-const muted = 'text-text-muted text-sm';
+const muted = 'text-text-muted text-agent-body';
 const SOURCE_KIND_LABEL = { agent: 'Agents', skill: 'Skills' } as const;
 const SCOPE_LABEL = { user: '使用者', project: '專案' } as const;
 
@@ -74,7 +74,7 @@ export function DiscoverySettings({
   };
 
   return (
-    <div className="flex flex-col gap-4 text-sm">
+    <div className="flex flex-col gap-4 text-agent-body">
       <p className={muted}>
         這些設定只決定 Office 讀取哪些本機位置，不會建立或修改任何
         Agent。來源目錄不存在時顯示「未找到」，Office 不會替你建立。
@@ -94,7 +94,7 @@ export function DiscoverySettings({
       </div>
 
       <section>
-        <h4 className="text-accent-bright text-base mb-2">本機專案來源</h4>
+        <h4 className="text-accent-bright text-agent-heading mb-2">本機專案來源</h4>
         {config.projectRoots.length === 0 ? (
           <p className={muted}>
             尚未設定。加入專案根目錄後，會讀取其中的 .claude/agents 與 .claude/skills。
@@ -132,11 +132,11 @@ export function DiscoverySettings({
             加入
           </Button>
         </div>
-        {inputError && <p className="text-warning text-sm mt-1">{inputError}</p>}
+        {inputError && <p className="text-warning text-agent-body mt-1">{inputError}</p>}
       </section>
 
       <section>
-        <h4 className="text-accent-bright text-base mb-2">顯示為 Agent 的 Skills</h4>
+        <h4 className="text-accent-bright text-agent-heading mb-2">顯示為 Agent 的 Skills</h4>
         <p className={muted}>
           Skill 多半是輔助工具，只有列在這裡的名稱才會成為人物（可用 * 萬用字元）。
         </p>
@@ -196,7 +196,7 @@ export function DiscoverySettings({
       </section>
 
       <section>
-        <h4 className="text-accent-bright text-base mb-2">掃描位置</h4>
+        <h4 className="text-accent-bright text-agent-heading mb-2">掃描位置</h4>
         <ul className="flex flex-col gap-1">
           {sources.map((source) => (
             <li key={`${source.kind}:${source.root}`} className="flex justify-between gap-4">
@@ -213,7 +213,7 @@ export function DiscoverySettings({
 
       {problems.length > 0 && (
         <section>
-          <h4 className="text-warning text-base mb-2">無法辨識的定義</h4>
+          <h4 className="text-warning text-agent-heading mb-2">無法辨識的定義</h4>
           <ul className="flex flex-col gap-1">
             {problems.map((problem) => (
               <li key={`${problem.filePath}:${problem.reason}`} className="break-all">
