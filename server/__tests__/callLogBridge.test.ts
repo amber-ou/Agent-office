@@ -101,13 +101,15 @@ function toolResult(toolId: string, text: string, isError = false) {
   });
 }
 
-function slashCommand(uuid: string, name: string, cwd = project) {
+function slashCommand(uuid: string, name: string, cwd = project, args?: string) {
   return JSON.stringify({
     type: 'user',
     uuid,
     cwd,
     message: {
-      content: `<command-message>${name} is running…</command-message>\n<command-name>/${name}</command-name>`,
+      content: `<command-message>${name} is running…</command-message>\n<command-name>/${name}</command-name>${
+        args ? `\n<command-args>${args}</command-args>` : ''
+      }`,
     },
   });
 }
@@ -376,8 +378,26 @@ describe('skills and run records (/figma-ui)', () => {
     expect(await allCalls()).toHaveLength(1);
   });
 
+  /** A ledger as figma-ui's state-store.mjs / run-report.mjs write it
+   *  (schemas/ledger.schema.json v1.6 at 69ad2f8). */
+  const figmaLedger = (runId: string, patch: Record<string, unknown> = {}) =>
+    ledger(runId, {
+      schemaVersion: '1.2',
+      runId,
+      phase: 'intake',
+      status: 'in_progress',
+      entities: [],
+      lastVerifiedOperationId: null,
+      pendingOperations: [],
+      pendingQuestions: [],
+      gaps: [],
+      phaseHistory: [{ phase: 'intake', enteredAt: new Date().toISOString() }],
+      updatedAt: new Date().toISOString(),
+      ...patch,
+    });
+
   it('says unknown at turn end without a run record, then follows the ledger', async () => {
-    line(1, slashCommand('rec-1', 'figma-ui'));
+    line(1, slashCommand('rec-1', 'figma-ui', project, '登入頁改版'));
     await bridge.flush();
     store.broadcast({ type: 'agentStatus', id: 1, status: 'waiting' });
     expect(await call('session-A', 'rec-1')).toMatchObject({
@@ -385,43 +405,109 @@ describe('skills and run records (/figma-ui)', () => {
       evidenceSource: 'turn_end',
     });
 
-    ledger('run-1', {
-      runId: 'run-1',
-      phase: 'requirements',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      questionRounds: [{ questions: ['Which page?'], answers: [] }],
+    // run-report.mjs ask: an open question round.
+    figmaLedger('ui-20261003-001', {
+      questionRounds: [
+        {
+          id: 'qr-001',
+          phase: 'intake',
+          askedAt: new Date().toISOString(),
+          answeredAt: null,
+          questionCount: 2,
+        },
+      ],
     });
     await bridge.pollRunRecords();
     expect(await call('session-A', 'rec-1')).toMatchObject({
       status: 'waiting_response',
       evidenceSource: 'run_record',
-      runId: 'run-1',
-      phase: 'requirements',
+      runId: 'ui-20261003-001',
+      phase: '需求確認（intake）',
+    });
+    // The question round explains the turn end: it stays waiting.
+    store.broadcast({ type: 'agentStatus', id: 1, status: 'waiting' });
+    expect((await call('session-A', 'rec-1')).status).toBe('waiting_response');
+
+    // run-report.mjs answered + phase build: in progress again.
+    figmaLedger('ui-20261003-001', {
+      phase: 'build',
+      questionRounds: [
+        {
+          id: 'qr-001',
+          phase: 'intake',
+          askedAt: new Date().toISOString(),
+          answeredAt: new Date().toISOString(),
+          questionCount: 2,
+        },
+      ],
+      updatedAt: new Date(Date.now() + 500).toISOString(),
+    });
+    await bridge.pollRunRecords();
+    expect(await call('session-A', 'rec-1')).toMatchObject({
+      status: 'running',
+      phase: '建置（build）',
     });
 
-    ledger('run-1', {
-      runId: 'run-1',
-      phase: 'delivery',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date(Date.now() + 1000).toISOString(),
-      completed: true,
+    // evaluate-completion.mjs --write: the explicit completion verdict.
+    const evaluatedAt = new Date(Date.now() + 1000).toISOString();
+    figmaLedger('ui-20261003-001', {
+      phase: 'handoff',
+      status: 'complete',
+      completionEvaluatedAt: evaluatedAt,
+      updatedAt: evaluatedAt,
     });
     await bridge.pollRunRecords();
     const done = await call('session-A', 'rec-1');
     expect(done).toMatchObject({
       status: 'ended',
       evidenceSource: 'run_record',
-      phase: 'delivery',
+      phase: '交付（handoff）',
     });
     expect(done.endedAt).toBeDefined();
   });
 
+  it('never reads blocked or partial as a completion', async () => {
+    line(1, slashCommand('rec-1', 'figma-ui'));
+    const at = new Date().toISOString();
+    figmaLedger('ui-20261003-001', {
+      phase: 'validate',
+      status: 'partial',
+      completionEvaluatedAt: at,
+    });
+    await bridge.pollRunRecords();
+    const c = await call('session-A', 'rec-1');
+    expect(c.status).toBe('running');
+    expect(c.endedAt).toBeUndefined();
+    expect(c.phase).toBe('驗證（validate）・評估：部分完成');
+  });
+
+  it('links continue <run-id> to that run, without applying its earlier completion', async () => {
+    // Yesterday's run, completed then.
+    const yesterday = new Date(Date.now() - 24 * 3600_000).toISOString();
+    figmaLedger('ui-20261002-001', {
+      phase: 'handoff',
+      status: 'complete',
+      completionEvaluatedAt: yesterday,
+      phaseHistory: [{ phase: 'intake', enteredAt: yesterday }],
+      updatedAt: yesterday,
+    });
+    figmaLedger('ui-20261003-001'); // another run, created just now
+    line(1, slashCommand('rec-1', 'figma-ui', project, 'continue ui-20261002-001 改按鈕顏色'));
+    await bridge.pollRunRecords();
+    const c = await call('session-A', 'rec-1');
+    expect(c).toMatchObject({ status: 'running', runId: 'ui-20261002-001' });
+    expect(c.endedAt).toBeUndefined();
+    // The arguments themselves are never stored.
+    expect(JSON.stringify(c)).not.toContain('改按鈕顏色');
+  });
+
   it('ignores a ledger from before the invocation, and an ambiguous one', async () => {
-    ledger('old-run', {
-      createdAt: '2020-01-01T00:00:00.000Z',
-      updatedAt: '2020-01-01T00:00:00.000Z',
-      completed: true,
+    const old = '2020-01-01T00:00:00.000Z';
+    figmaLedger('ui-20200101-001', {
+      status: 'complete',
+      completionEvaluatedAt: old,
+      phaseHistory: [{ phase: 'intake', enteredAt: old }],
+      updatedAt: old,
     });
     line(1, slashCommand('rec-1', 'figma-ui'));
     await bridge.pollRunRecords();
@@ -431,7 +517,8 @@ describe('skills and run records (/figma-ui)', () => {
     // would be a guess, so neither gets one.
     store.set(2, createTestAgent({ id: 2, sessionId: 'session-B', jsonlFile: '/test/b.jsonl' }));
     line(2, slashCommand('rec-2', 'figma-ui'));
-    ledger('new-run', { createdAt: new Date().toISOString(), completed: true });
+    const now = new Date().toISOString();
+    figmaLedger('ui-20261003-002', { status: 'complete', completionEvaluatedAt: now });
     await bridge.pollRunRecords();
     expect((await call('session-A', 'rec-1')).status).toBe('running');
     expect((await call('session-B', 'rec-2')).status).toBe('running');

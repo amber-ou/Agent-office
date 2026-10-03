@@ -35,7 +35,13 @@ import { scanNativeAgentRoster } from './nativeAgentRoster.js';
 import type { TeammateDeparture } from './observationHooks.js';
 import { setTeammateDepartureObserver } from './observationHooks.js';
 import type { RunRecord } from './runRecords.js';
-import { correlateRun, findRunRecords, RUN_ACTIVE_WINDOW_MS } from './runRecords.js';
+import {
+  correlateRun,
+  findRunRecords,
+  RUN_ACTIVE_WINDOW_MS,
+  RUN_START_SLACK_MS,
+  runIdFromInvocationArgs,
+} from './runRecords.js';
 import type { ObservationEvent } from './transcriptParser.js';
 import { setObservationCallback } from './transcriptParser.js';
 
@@ -60,8 +66,12 @@ interface OpenInvocation {
   startedAt: number;
   teammateName?: string;
   linkedRunId?: string;
+  /** Whether `runId` has been written to the row yet. */
+  runIdRecorded?: boolean;
   /** Last run-record fingerprint applied, so a poll writes only on change. */
   appliedRun?: string;
+  /** The run-record state last applied (decides what a turn end means). */
+  appliedState?: RunRecord['state'];
   /** Set while WE moved it to waiting_response on a permission prompt — so
    *  resumption only reverts waits this tracker itself introduced. */
   permissionWait?: boolean;
@@ -291,6 +301,10 @@ export function installCallLogBridge(
             ...(cwd ? { cwd } : {}),
             ...(identity.entry.projectRoot ? { projectRoot: identity.entry.projectRoot } : {}),
             startedAt: Date.now(),
+            // `continue <run-id>` / `resume <run-id>` name the run outright.
+            ...(runIdFromInvocationArgs(event.skill, event.args)
+              ? { linkedRunId: runIdFromInvocationArgs(event.skill, event.args) }
+              : {}),
           },
           identity,
           `/${event.skill}`,
@@ -363,7 +377,10 @@ export function installCallLogBridge(
       for (const inv of openIn(sessionId)) {
         if (inv.kind !== 'skill') continue;
         inv.permissionWait = false;
-        if (inv.appliedRun) continue; // a linked run record decides
+        // A run record that says "waiting for your answer" explains the turn
+        // end; anything else (including "in progress") does not.
+        if (inv.appliedState === 'waiting_response') continue;
+        inv.appliedState = undefined;
         setStatus(inv, 'unknown', 'turn_end', { phase: '回合已結束，未取得完成或等待訊號' });
       }
     }
@@ -439,34 +456,41 @@ export function installCallLogBridge(
       if (!run) continue;
       const fingerprint = runFingerprint(run);
       if (inv.appliedRun === fingerprint) continue;
-      const firstLink = !inv.linkedRunId;
       inv.linkedRunId = run.runId;
       inv.appliedRun = fingerprint;
       const evidence: EvidenceSource =
         run.source === 'status-report' ? 'status_report' : 'run_record';
-      if (firstLink) {
+      if (!inv.runIdRecorded) {
+        inv.runIdRecorded = true;
         enqueue(async (storage) => {
           await storage.callLog.annotate(inv.sessionId, inv.toolUseId, { runId: run.runId });
         });
       }
-      if (run.state === 'completed' || run.state === 'failed') {
+      // Evidence written before this invocation began belongs to an earlier
+      // one (a run completed yesterday and now continued, an old question
+      // round): its phase is shown, its state is not applied.
+      const fresh = run.stateAt !== undefined && run.stateAt >= inv.startedAt - RUN_START_SLACK_MS;
+      if (fresh && (run.state === 'completed' || run.state === 'failed')) {
+        inv.appliedState = run.state;
         finish(inv, run.state === 'completed' ? 'ended' : 'failed', evidence, run.phase);
-      } else if (run.state === 'waiting_response') {
+      } else if (fresh && run.state === 'waiting_response') {
+        inv.appliedState = run.state;
         setStatus(inv, 'waiting_response', evidence, {
           phase: run.phase ?? '等待回答',
           allowFromUnknown: true,
         });
       } else if (
+        fresh &&
         run.state === 'active' &&
-        Date.now() - run.updatedAt <= RUN_ACTIVE_WINDOW_MS &&
-        run.updatedAt >= inv.startedAt
+        Date.now() - run.updatedAt <= RUN_ACTIVE_WINDOW_MS
       ) {
+        inv.appliedState = run.state;
         setStatus(inv, 'running', evidence, {
           ...(run.phase ? { phase: run.phase } : {}),
           allowFromUnknown: true,
         });
       } else if (run.phase) {
-        // A phase without fresh activity is shown, but proves nothing about
+        // A phase without fresh evidence is shown, but proves nothing about
         // whether the run is executing — status is left as it was.
         enqueue(async (storage) => {
           await storage.callLog.annotate(inv.sessionId, inv.toolUseId, { phase: run.phase });

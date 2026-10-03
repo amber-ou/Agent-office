@@ -17,9 +17,13 @@
  *  - A record existing is not evidence the run is executing: `active` only
  *    counts together with a recent update (see `RUN_ACTIVE_WINDOW_MS`).
  *
- * The figma-ui field names below are read tolerantly (several spellings),
- * because the ledger schema at the skill's baseline commit could not be
- * inspected from here; see docs/observation.md for the open item.
+ * The figma-ui reader follows `schemas/ledger.schema.json` and
+ * `scripts/run-report.mjs` of amber-ou/Agent-Figma-UI-agent at 69ad2f8 (spec
+ * v1.6): `phase`, `status` (in_progress | complete |
+ * complete_with_exceptions | awaiting_user | blocked | partial, written by
+ * evaluate-completion.mjs together with `completionEvaluatedAt`),
+ * `questionRounds[{askedAt, answeredAt|null}]`, `phaseHistory`, `updatedAt`.
+ * The ledger carries no Claude session id.
  */
 
 import * as fs from 'node:fs';
@@ -40,6 +44,10 @@ export interface RunRecord {
   /** ms since epoch. */
   createdAt?: number;
   updatedAt: number;
+  /** When the evidence for `state` was written (ms). Evidence older than the
+   *  invocation it is matched to belongs to an earlier invocation and is not
+   *  applied (e.g. a run completed yesterday, now continued). */
+  stateAt?: number;
 }
 
 /** An `active` record older than this is not taken as "still running". */
@@ -92,90 +100,88 @@ function asObject(value: unknown): Json | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : undefined;
 }
 
-const COMPLETED = /^(completed?|done|finished|success(ful)?|succeeded|accepted)$/i;
-const FAILED = /^(failed|failure|error|errored|aborted|cancell?ed)$/i;
-const WAITING =
-  /^(waiting|awaiting|awaiting[-_ ]?(answers?|input|user|response)|needs[-_ ]?input|question(s)?[-_ ]?pending|blocked[-_ ]?on[-_ ]?user)$/i;
-const ACTIVE = /^(running|active|in[-_ ]?progress|working|started)$/i;
+/** figma-ui phases (common.schema.json `phase`), with a short label. */
+const FIGMA_PHASE_LABELS: Record<string, string> = {
+  intake: '需求確認',
+  preflight: '前置檢查',
+  discover: '探索',
+  plan: '規劃',
+  build: '建置',
+  validate: '驗證',
+  handoff: '交付',
+  reconcile: '對帳',
+};
 
-function stateFromText(text: string | undefined): RunState | undefined {
-  if (!text) return undefined;
-  if (COMPLETED.test(text)) return 'completed';
-  if (FAILED.test(text)) return 'failed';
-  if (WAITING.test(text)) return 'waiting_response';
-  if (ACTIVE.test(text)) return 'active';
-  return undefined;
-}
-
-/** A question round is open when it has no recorded answer and is not
- *  explicitly closed. Unrecognized shapes count as "not evidence". */
-function hasOpenQuestionRound(ledger: Json): boolean | undefined {
-  const rounds = pick(ledger, 'questionRounds', 'question_rounds', 'questions');
-  if (!Array.isArray(rounds) || rounds.length === 0) return undefined;
-  const last = asObject(rounds[rounds.length - 1]);
-  if (!last) return undefined;
-  const status = str(pick(last, 'status', 'state'));
-  if (status) {
-    if (/^(open|pending|asked|awaiting([-_ ]?answers?)?|waiting)$/i.test(status)) return true;
-    if (/^(answered|closed|resolved|done|complete(d)?)$/i.test(status)) return false;
-  }
-  if (typeof last['answered'] === 'boolean') return !last['answered'];
-  const answers = pick(last, 'answers', 'answer', 'responses');
-  if (Array.isArray(answers)) return answers.length === 0;
-  if (answers !== undefined) return !str(answers) && !asObject(answers);
-  if (pick(last, 'answeredAt', 'answered_at') !== undefined) return false;
-  return undefined;
-}
-
-/** The explicit completion verdict, when the ledger states one. */
-function completionVerdict(ledger: Json): RunState | undefined {
-  for (const key of ['completed', 'complete', 'done', 'isComplete']) {
-    if (ledger[key] === true) return 'completed';
-  }
-  const verdict = asObject(pick(ledger, 'completion', 'verdict', 'result', 'outcome'));
-  if (verdict) {
-    if (
-      verdict['complete'] === true ||
-      verdict['completed'] === true ||
-      verdict['passed'] === true
-    ) {
-      return 'completed';
-    }
-    const text = stateFromText(str(pick(verdict, 'status', 'state', 'verdict')));
-    if (text === 'completed' || text === 'failed') return text;
-  } else {
-    const text = stateFromText(str(pick(ledger, 'completion', 'verdict', 'result', 'outcome')));
-    if (text === 'completed' || text === 'failed') return text;
-  }
-  return undefined;
-}
+/** Evaluation results that are not a completion (status stays observed only). */
+const FIGMA_UNRESOLVED_STATUS_LABELS: Record<string, string> = {
+  blocked: '評估：受阻',
+  partial: '評估：部分完成',
+};
 
 export function parseFigmaLedger(json: Json, filePath: string, stat: fs.Stats): RunRecord {
-  const stateObj = asObject(json['state']);
-  const statusText = str(pick(json, 'status')) ?? str(pick(stateObj, 'status'));
-  const phase =
-    str(pick(json, 'phase', 'currentPhase', 'current_phase')) ??
-    str(pick(stateObj, 'phase')) ??
-    str(pick(asObject(json['status']), 'phase'));
-  let state: RunState = completionVerdict(json) ?? stateFromText(statusText) ?? 'unknown';
-  if (state === 'active' || state === 'unknown') {
-    const open = hasOpenQuestionRound(json);
-    if (open === true) state = 'waiting_response';
+  const rawPhase = str(json['phase']);
+  const status = str(json['status']);
+  const updatedAt = time(json['updatedAt']) ?? stat.mtimeMs;
+  const evaluatedAt = time(json['completionEvaluatedAt']);
+  const rounds = Array.isArray(json['questionRounds']) ? json['questionRounds'] : [];
+  const openRound = [...rounds]
+    .reverse()
+    .map(asObject)
+    .find(
+      (r) =>
+        r &&
+        (r['answeredAt'] === null || r['answeredAt'] === undefined) &&
+        time(r['askedAt']) !== undefined,
+    );
+  const history = Array.isArray(json['phaseHistory']) ? json['phaseHistory'] : [];
+  const firstPhaseAt = time(asObject(history[0])?.['enteredAt']);
+
+  let state: RunState = 'unknown';
+  let stateAt: number | undefined;
+  if ((status === 'complete' || status === 'complete_with_exceptions') && evaluatedAt) {
+    // Only evaluate-completion.mjs writes these, together with the time.
+    state = 'completed';
+    stateAt = evaluatedAt;
+  } else if (openRound) {
+    state = 'waiting_response';
+    stateAt = time(openRound['askedAt']);
+  } else if (status === 'awaiting_user') {
+    state = 'waiting_response';
+    stateAt = evaluatedAt ?? updatedAt;
+  } else if (status === 'in_progress') {
+    state = 'active';
+    stateAt = updatedAt;
   }
+
+  const phaseParts: string[] = [];
+  if (rawPhase) phaseParts.push(`${FIGMA_PHASE_LABELS[rawPhase] ?? rawPhase}（${rawPhase}）`);
+  if (status && FIGMA_UNRESOLVED_STATUS_LABELS[status]) {
+    phaseParts.push(FIGMA_UNRESOLVED_STATUS_LABELS[status]!);
+  }
+  if (status === 'complete_with_exceptions') phaseParts.push('完成（含例外）');
+
   return {
     source: 'figma-ui-ledger',
-    runId: str(pick(json, 'runId', 'run_id', 'id')) ?? path.basename(path.dirname(filePath)),
+    runId: str(json['runId']) ?? path.basename(path.dirname(filePath)),
     filePath,
-    ...(str(pick(json, 'sessionId', 'session_id', 'claudeSessionId'))
-      ? { sessionId: str(pick(json, 'sessionId', 'session_id', 'claudeSessionId')) }
-      : {}),
     state,
-    ...(phase ? { phase } : {}),
-    createdAt:
-      time(pick(json, 'createdAt', 'created_at', 'startedAt', 'started_at')) ??
-      (stat.birthtimeMs > 0 ? stat.birthtimeMs : undefined),
-    updatedAt: time(pick(json, 'updatedAt', 'updated_at', 'lastUpdated')) ?? stat.mtimeMs,
+    ...(phaseParts.length ? { phase: phaseParts.join('・') } : {}),
+    createdAt: firstPhaseAt ?? (stat.birthtimeMs > 0 ? stat.birthtimeMs : undefined),
+    updatedAt,
+    ...(stateAt !== undefined ? { stateAt } : {}),
   };
+}
+
+/** `/figma-ui continue <run-id> …` and `/figma-ui resume <run-id>` name their
+ *  run outright (state-store.mjs parseInvocation) — the strongest link there
+ *  is. The arguments are used in memory only, never stored. */
+export function runIdFromInvocationArgs(
+  skill: string,
+  args: string | undefined,
+): string | undefined {
+  if (skill !== 'figma-ui' || !args) return undefined;
+  const match = args.trim().match(/^(continue|resume)\s+([A-Za-z0-9][A-Za-z0-9._-]{0,63})\b/i);
+  return match?.[2];
 }
 
 export function readFigmaLedgers(dir: string): RunRecord[] {
@@ -222,6 +228,7 @@ export function parseStatusReport(json: Json, filePath: string, stat: fs.Stats):
     ...(phase ? { phase } : {}),
     createdAt: time(pick(json, 'startedAt')),
     updatedAt: time(pick(json, 'updatedAt')) ?? stat.mtimeMs,
+    stateAt: time(pick(json, 'updatedAt')) ?? stat.mtimeMs,
   };
 }
 

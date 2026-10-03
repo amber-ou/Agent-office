@@ -138,6 +138,9 @@ export type ObservationEvent =
       skill: string;
       via: 'tool' | 'slash';
       cwd?: string;
+      /** Slash-command arguments. In memory only — the bridge reads a run id
+       *  from them (e.g. `/figma-ui continue <run-id>`) and never stores them. */
+      args?: string;
     };
 
 let observationCallback: ((event: ObservationEvent) => void) | null = null;
@@ -293,6 +296,9 @@ export function processTranscriptLine(
                   invocationId: block.id,
                   skill,
                   via: 'tool',
+                  ...(typeof block.input?.['args'] === 'string'
+                    ? { args: block.input['args'] }
+                    : {}),
                   ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
                 });
               }
@@ -407,6 +413,7 @@ export function processTranscriptLine(
                   .join('\n')
               : '';
         const command = text.includes('<command-name>') ? slashCommandName(text) : undefined;
+        const args = text.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1]?.trim();
         if (command) {
           observationCallback?.({
             kind: 'skillStart',
@@ -416,6 +423,7 @@ export function processTranscriptLine(
             skill: command,
             via: 'slash',
             ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
+            ...(args ? { args } : {}),
           });
         }
       }

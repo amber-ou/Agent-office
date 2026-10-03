@@ -48,7 +48,7 @@ Project／Task／Agent 資料表與 `agents\`、`blobs\`、`runtime\` 資料夾�
 6. **`/figma-ui`**：在 Figma UI 專案中執行 `/figma-ui`。確認 figma-ui 人物變「工作中」；
    回合結束時若 ledger 尚無對應紀錄會顯示「未知」；若 ledger 有未回答的提問，顯示
    「等待回應」與階段；明確完成後顯示「已結束（依據：Agent 自身的執行紀錄）」。
-   請把實際 `design-runs/<id>/ledger.json` 的欄位回報，以核對欄位對照。
+   `/figma-ui continue <run-id>` 會直接關聯到該 run，且不會沿用它先前的完成狀態。
 7. **重啟與資料邊界**：在 agent 執行中關閉 Office 再開啟，該筆顯示「未知」而非「已結束」，
    agent 本身不受影響。比對 `~/.claude/agents`、專案 `.claude`、`design-runs` 的修改時間，
    Office 沒有寫入。

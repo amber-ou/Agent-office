@@ -241,6 +241,7 @@ describe('observation events', () => {
         skill: 'figma-ui',
         via: 'slash',
         cwd: '/work/design',
+        args: 'login page',
       },
     ]);
   });

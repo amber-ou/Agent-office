@@ -96,15 +96,28 @@ Office 以唯讀方式讀 agent **既有的**紀錄來補充階段與等待狀�
 - **figma-ui ledger**：`<dir>/design-runs/<run-id>/ledger.json`，`<dir>` 為呼叫所在工作目錄，以及該 skill 所屬專案根目錄。
 - **不讀** `.figma-ui/active-run.json`（屬於寫入鎖，不能代表整個 run），不執行任何 Figma 腳本、不取得鎖、不寫入任何檔案。
 
+欄位對照依 `amber-ou/Agent-Figma-UI-agent` @ `69ad2f8` 的 `schemas/ledger.schema.json`（spec v1.6）、`scripts/state-store.mjs`、`scripts/run-report.mjs`、`scripts/evaluate-completion.mjs` 核對：
+
+| ledger 欄位                                                               | 寫入者                            | Office 的解讀                                                  |
+| ------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------- |
+| `phase`（intake…reconcile）                                               | `run-report.mjs phase`            | 顯示為階段，例如「建置（build）」                              |
+| `questionRounds[]` 最後一輪 `answeredAt: null`                            | `run-report.mjs ask` / `answered` | 等待回應（以 `askedAt` 為證據時間）                            |
+| `status: complete` / `complete_with_exceptions` + `completionEvaluatedAt` | `evaluate-completion.mjs --write` | 已結束（依據：Agent 自身的執行紀錄）                           |
+| `status: awaiting_user`                                                   | 同上                              | 等待回應                                                       |
+| `status: in_progress` + 10 分鐘內的 `updatedAt`                           | 各腳本                            | 執行中                                                         |
+| `status: blocked` / `partial`                                             | 同上                              | **不是完成**：只在階段旁註明「評估：受阻／部分完成」，狀態不變 |
+| `userAcceptance`                                                          | `--accept-test-run`               | 不讀（依 spec 它不代表 complete）                              |
+
+`/figma-ui` 只能用 slash 指令呼叫（`disable-model-invocation: true`），skill 定義在 Figma UI 專案的 `.claude/skills/figma-ui/`，所以要在「探索設定」加入該專案根目錄。`design-runs/` 位於專案根目錄（`CLAUDE_PROJECT_DIR`）。
+
 關聯規則（不猜測）：
 
-1. 紀錄內含相同 Claude session id → 關聯。
-2. 否則只有在「同一目錄只有一個進行中的 figma-ui 呼叫」且「只有一個在呼叫開始後建立的 run」時才關聯。
+1. `/figma-ui continue <run-id> …`、`/figma-ui resume <run-id>` 直接指定 run（只在記憶體中讀參數，不儲存）。
+2. ledger 沒有 Claude session id；新 run 只有在「同一目錄只有一個進行中的 figma-ui 呼叫」且「只有一個在呼叫開始後建立的 run」時才以時間關聯（建立時間取 `phaseHistory[0].enteredAt`，沒有時用檔案建立時間）。
 3. 一旦關聯，之後沿用同一個 run id。
+4. **證據時間早於本次呼叫的狀態不套用**：例如昨天已完成的 run 今天 `continue`，不會被當成已完成；只顯示階段。
 
-套用規則：明確完成判定 → 已結束（依據：Agent 自身的執行紀錄）；失敗 → 失敗；最後一輪提問沒有答案 → 等待回應；`active` 只有在 10 分鐘內有更新、且在呼叫開始之後才算執行中；其餘只顯示階段，不改變狀態。
-
-> **尚待核對**：本工作階段無法讀取 `amber-ou/Agent-Figma-UI-agent`（基準 `69ad2f8`），ledger 欄位名稱以寬鬆方式讀取（`phase`/`currentPhase`、`status`、`completed`/`completion`/`verdict`、`questionRounds[].answers` 等）。實際欄位不符時，Office 會顯示「未知」而不是猜測；需以真實 ledger 核對 `runRecords.ts` 的對照。
+回合結束時，若 ledger 有未回答的提問，維持「等待回應」；否則為「未知」，直到 ledger 再更新。
 
 ### 選配：共用狀態回報
 
@@ -155,5 +168,5 @@ Project／Task 管理、派工、Run／Cancel／Resume、Review／Accept、Offic
 - Office 停止期間發生的結束，只有在重啟後該工作階段被重新追蹤、且讀到對應紀錄時才會補上；否則維持「未知」。
 - Skill 在回合結束後若沒有執行紀錄，只能顯示「未知」。
 - 呼叫紀錄的工作目錄（用於執行紀錄關聯）只存在記憶體；重啟後不再為舊呼叫關聯 run。
-- figma-ui ledger 欄位對照尚未以真實檔案核對（見 §4）。
+- figma-ui 欄位對照已依原始碼核對，但尚未用真實 `/figma-ui` 執行驗證（見 §4）。
 - VS Code e2e 已改為「在 terminal 中自行執行 claude」，但本次無法在沙箱下載 VS Code 執行，需在 CI 或本機確認。
