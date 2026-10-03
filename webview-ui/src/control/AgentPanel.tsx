@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../components/ui/Button.js';
 import { Modal } from '../components/ui/Modal.js';
 import { AGENT_STATUS_LABELS } from './agentDirectory.js';
+import { agentContentClass, agentModalClass } from './agentPanelStyles.js';
 import {
   agentLabel,
   CALL_STATUS_LABELS,
@@ -35,8 +36,9 @@ interface AgentPanelProps {
 }
 
 const rowClass = 'border-b border-border last:border-0';
-const cellClass = 'py-3 px-4 align-top text-sm';
-const headClass = 'py-2 px-4 text-left text-text-muted text-xs uppercase tracking-wide';
+const cellClass = 'py-3 px-4 align-top text-agent-body [overflow-wrap:anywhere]';
+const headClass =
+  'py-2 px-4 text-left text-text-muted text-agent-body uppercase tracking-wide whitespace-nowrap';
 
 export function AgentPanel({ isOpen, onClose, onSelectAgent }: AgentPanelProps) {
   const { agents, calls, rosterLoaded, scanRoot, connectionState } = useAgentDirectory();
@@ -63,126 +65,141 @@ export function AgentPanel({ isOpen, onClose, onSelectAgent }: AgentPanelProps) 
   const disconnected = connectionState !== 'connected';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Agent" className="w-256 max-w-[92vw]">
-      <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
-        <p className="text-text-muted text-sm px-4">
-          Claude Code 建立與維護的 Agent，Office 只觀測與顯示。Agent 的建立、修改與派工請在 Claude
-          Code 進行。
-        </p>
-
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Agent"
+      className={agentModalClass}
+      titleClassName="text-agent-title"
+    >
+      <div className={agentContentClass}>
         {disconnected && rosterLoaded && agents.length > 0 && (
-          <p className="text-warning text-sm px-4">連線中斷，以下為最後已知狀態。</p>
+          <p className="text-warning text-agent-body px-4">連線中斷，以下為最後已知狀態。</p>
         )}
 
         {disconnected && !rosterLoaded ? (
-          <p className="text-warning text-sm px-4 py-6">連線中斷，尚未取得 Agent 名單。</p>
+          <p className="text-warning text-agent-body px-4 py-6">連線中斷，尚未取得 Agent 名單。</p>
         ) : !rosterLoaded ? (
-          <p className="text-text-muted text-sm px-4 py-6">讀取中…</p>
+          <p className="text-text-muted text-agent-body px-4 py-6">讀取中…</p>
         ) : agents.length === 0 ? (
-          <p className="text-text-muted text-sm px-4 py-6">
+          <p className="text-text-muted text-agent-body px-4 py-6">
             尚未找到 CC Agent。掃描位置：{scanRoot ?? '—'}
           </p>
         ) : (
           <>
             <section>
-              <h3 className="text-accent-bright text-lg px-4 mb-2">Agent 狀態</h3>
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-border">
-                    <th className={headClass}>名稱</th>
-                    <th className={headClass}>狀態</th>
-                    <th className={headClass}>目前任務</th>
-                    <th className={headClass}>執行時長</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agents.map((agent) => (
-                    <tr
-                      key={agent.key}
-                      className={`${rowClass} cursor-pointer hover:bg-btn-bg`}
-                      onClick={() => onSelectAgent(agent.key)}
-                    >
-                      <td className={cellClass}>
-                        {agent.name}
-                        {agent.ambiguous && (
-                          <span className="text-warning text-xs"> （名稱衝突）</span>
-                        )}
-                      </td>
-                      <td className={cellClass}>{AGENT_STATUS_LABELS[agent.status]}</td>
-                      <td className={cellClass}>
-                        {agent.status === 'idle' || !agent.currentCall ? (
-                          <span className="text-text-muted">
-                            目前無執行任務{!agent.everCalled && ' ・尚未呼叫'}
-                          </span>
-                        ) : (
-                          truncate(
-                            agent.currentCall.taskText ||
-                              agent.currentCall.taskDescription ||
-                              '（未取得任務內容）',
-                            60,
-                          )
-                        )}
-                      </td>
-                      <td className={cellClass}>
-                        {agent.status === 'idle' || !agent.currentCall
-                          ? '—'
-                          : durationLabel(agent.currentCall, now)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-
-            <section>
-              <h3 className="text-accent-bright text-lg px-4 mb-2 mt-4">呼叫歷史</h3>
-              {calls.length === 0 ? (
-                <p className="text-text-muted text-sm px-4 py-6">尚未觀察到任何呼叫。</p>
-              ) : (
-                <table className="w-full border-collapse">
+              <h3 className="text-accent-bright text-agent-heading px-4 mb-2">Agent 狀態</h3>
+              <div
+                className="overflow-x-auto"
+                role="region"
+                aria-label="Agent 狀態表格"
+                tabIndex={0}
+              >
+                <table className="w-full min-w-[640px] border-collapse">
                   <thead>
                     <tr className="border-b-2 border-border">
-                      <th className={headClass}>呼叫時間</th>
-                      <th className={headClass}>Agent</th>
-                      <th className={headClass}>任務內容</th>
+                      <th className={headClass}>名稱</th>
                       <th className={headClass}>狀態</th>
+                      <th className={headClass}>目前任務</th>
                       <th className={headClass}>執行時長</th>
-                      <th className={headClass}>結束時間</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {calls.map((call) => {
-                      const expanded = expandedCallId === call.id;
-                      const summary = call.taskDescription || call.taskText || '';
-                      return (
-                        <tr
-                          key={call.id}
-                          className={`${rowClass} cursor-pointer hover:bg-btn-bg`}
-                          onClick={() => setExpandedCallId(expanded ? null : call.id)}
-                        >
-                          <td className={cellClass}>{formatTimestamp(call.startedAt)}</td>
-                          <td className={cellClass}>{agentLabel(call)}</td>
-                          <td className={cellClass}>
-                            {expanded ? (
-                              <div className="whitespace-pre-wrap break-words max-w-160">
-                                {call.taskText || call.taskDescription || (
-                                  <span className="text-text-muted">（未取得任務內容）</span>
-                                )}
-                              </div>
-                            ) : summary ? (
-                              <span className="text-text-muted">{truncate(summary, 60)}</span>
-                            ) : (
-                              <span className="text-text-muted">（未取得任務內容）</span>
-                            )}
-                          </td>
-                          <td className={cellClass}>{CALL_STATUS_LABELS[call.status]}</td>
-                          <td className={cellClass}>{durationLabel(call, now)}</td>
-                          <td className={cellClass}>{formatTimestamp(call.endedAt)}</td>
-                        </tr>
-                      );
-                    })}
+                    {agents.map((agent) => (
+                      <tr
+                        key={agent.key}
+                        className={`${rowClass} cursor-pointer hover:bg-btn-bg`}
+                        onClick={() => onSelectAgent(agent.key)}
+                      >
+                        <td className={cellClass}>
+                          {agent.name}
+                          {agent.ambiguous && (
+                            <span className="text-warning text-agent-body"> （名稱衝突）</span>
+                          )}
+                        </td>
+                        <td className={cellClass}>{AGENT_STATUS_LABELS[agent.status]}</td>
+                        <td className={cellClass}>
+                          {agent.status === 'idle' || !agent.currentCall ? (
+                            <span className="text-text-muted">
+                              目前無執行任務{!agent.everCalled && ' ・尚未呼叫'}
+                            </span>
+                          ) : (
+                            truncate(
+                              agent.currentCall.taskText ||
+                                agent.currentCall.taskDescription ||
+                                '（未取得任務內容）',
+                              60,
+                            )
+                          )}
+                        </td>
+                        <td className={cellClass}>
+                          {agent.status === 'idle' || !agent.currentCall
+                            ? '—'
+                            : durationLabel(agent.currentCall, now)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
+              </div>
+            </section>
+
+            <section>
+              <h3 className="text-accent-bright text-agent-heading px-4 mb-2 mt-4">呼叫歷史</h3>
+              {calls.length === 0 ? (
+                <p className="text-text-muted text-agent-body px-4 py-6">尚未觀察到任何呼叫。</p>
+              ) : (
+                <div
+                  className="overflow-x-auto"
+                  role="region"
+                  aria-label="呼叫歷史表格"
+                  tabIndex={0}
+                >
+                  <table className="w-full min-w-[800px] border-collapse">
+                    <thead>
+                      <tr className="border-b-2 border-border">
+                        <th className={headClass}>呼叫時間</th>
+                        <th className={headClass}>Agent</th>
+                        <th className={headClass}>任務內容</th>
+                        <th className={headClass}>狀態</th>
+                        <th className={headClass}>執行時長</th>
+                        <th className={headClass}>結束時間</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {calls.map((call) => {
+                        const expanded = expandedCallId === call.id;
+                        const summary = call.taskDescription || call.taskText || '';
+                        return (
+                          <tr
+                            key={call.id}
+                            className={`${rowClass} cursor-pointer hover:bg-btn-bg`}
+                            onClick={() => setExpandedCallId(expanded ? null : call.id)}
+                          >
+                            <td className={cellClass}>{formatTimestamp(call.startedAt)}</td>
+                            <td className={cellClass}>{agentLabel(call)}</td>
+                            <td className={cellClass}>
+                              {expanded ? (
+                                <div className="whitespace-pre-wrap break-words max-w-160">
+                                  {call.taskText || call.taskDescription || (
+                                    <span className="text-text-muted">（未取得任務內容）</span>
+                                  )}
+                                </div>
+                              ) : summary ? (
+                                <span className="text-text-muted">{truncate(summary, 60)}</span>
+                              ) : (
+                                <span className="text-text-muted">（未取得任務內容）</span>
+                              )}
+                            </td>
+                            <td className={cellClass}>{CALL_STATUS_LABELS[call.status]}</td>
+                            <td className={cellClass}>{durationLabel(call, now)}</td>
+                            <td className={cellClass}>{formatTimestamp(call.endedAt)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </section>
           </>

@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 
 import { Modal } from '../components/ui/Modal.js';
 import { AGENT_STATUS_LABELS } from './agentDirectory.js';
+import { agentContentClass, agentModalClass } from './agentPanelStyles.js';
 import { CALL_STATUS_LABELS, durationLabel, formatTimestamp } from './callLogFormat.js';
 import { useAgentDirectory } from './useAgentDirectory.js';
 
@@ -21,7 +22,7 @@ interface AgentDetailPanelProps {
   onClose: () => void;
 }
 
-const rowLabel = 'text-text-muted text-sm';
+const rowLabel = 'text-text-muted text-agent-body';
 
 export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
   const { agents, connectionState } = useAgentDirectory();
@@ -45,20 +46,21 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
       onClose={onClose}
       title={agent?.name ?? 'Agent'}
       zIndex={60}
-      className="w-192 max-w-[92vw]"
+      className={agentModalClass}
+      titleClassName="text-agent-title"
     >
-      <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto px-4">
+      <div className={`${agentContentClass} px-4`}>
         {connectionState !== 'connected' && (
-          <p className="text-warning text-sm">連線中斷，以下為最後已知狀態。</p>
+          <p className="text-warning text-agent-body">連線中斷，以下為最後已知狀態。</p>
         )}
         {!agent ? (
-          <p className="text-text-muted text-sm py-4">
+          <p className="text-text-muted text-agent-body py-4">
             找不到這個 Agent，可能已從 CC 的 Agent 名單移除。
           </p>
         ) : (
           <>
             {agent.description && <p className={rowLabel}>{agent.description}</p>}
-            <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 text-agent-body">
               <span className={rowLabel}>狀態</span>
               <span>{AGENT_STATUS_LABELS[agent.status]}</span>
 
@@ -98,7 +100,7 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
               )}
             </div>
 
-            <h4 className="text-accent-bright text-base mt-4">呼叫歷史</h4>
+            <h4 className="text-accent-bright text-agent-heading mt-4">呼叫歷史</h4>
             {agent.history.length === 0 ? (
               <p className={`${rowLabel} py-2`}>尚未呼叫。</p>
             ) : (
@@ -111,13 +113,13 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
                       className="border border-border p-3 cursor-pointer hover:bg-btn-bg"
                       onClick={() => setExpandedCallId(expanded ? null : call.id)}
                     >
-                      <div className="flex justify-between gap-4 text-sm">
+                      <div className="flex flex-wrap justify-between gap-4 text-agent-body">
                         <span>{formatTimestamp(call.startedAt)}</span>
                         <span>{CALL_STATUS_LABELS[call.status]}</span>
                         <span>{durationLabel(call, now)}</span>
                       </div>
                       {expanded && (
-                        <div className="mt-2 text-sm whitespace-pre-wrap break-words">
+                        <div className="mt-2 text-agent-body whitespace-pre-wrap break-words">
                           {call.taskText || call.taskDescription || (
                             <span className={rowLabel}>（未取得任務內容）</span>
                           )}
