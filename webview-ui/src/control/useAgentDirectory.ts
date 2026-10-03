@@ -47,6 +47,26 @@ interface RawState {
    *  until the server says). Standalone needs the CURRENT server token in
    *  the page URL; an old tab from before a restart cannot edit. */
   canEdit: boolean | undefined;
+  /** The server predates the GitHub roster (an old Office process is still
+   *  serving this page) — the form says so instead of crashing. */
+  serverOutdated: boolean;
+}
+
+/** Shape guard for a config from a server that may be an older build:
+ *  every field the form reads gets a value. */
+function completeConfig(config: Partial<DiscoveryConfig>): DiscoveryConfig {
+  return {
+    includeUserAgents: config.includeUserAgents ?? true,
+    includeUserSkills: config.includeUserSkills ?? true,
+    projectRoots: config.projectRoots ?? [],
+    skillInclude: config.skillInclude ?? [],
+    github: {
+      enabled: config.github?.enabled ?? false,
+      owner: config.github?.owner ?? '',
+      repoPrefix: config.github?.repoPrefix ?? 'Agent-',
+      exclude: config.github?.exclude ?? [],
+    },
+  };
 }
 
 export interface AgentDirectoryView extends RawState {
@@ -69,6 +89,7 @@ const EMPTY_RAW: RawState = {
   scanRoot: undefined,
   configError: undefined,
   canEdit: undefined,
+  serverOutdated: false,
 };
 
 export function useAgentDirectory(): AgentDirectoryView {
@@ -98,8 +119,9 @@ export function useAgentDirectory(): AgentDirectoryView {
           candidates: message.candidates,
           sources: message.sources,
           problems: message.problems,
-          config: message.config,
+          config: completeConfig(message.config),
           github: message.github,
+          serverOutdated: !message.config.github,
           rosterLoaded: true,
           scanRoot: message.root,
         }));
@@ -109,7 +131,7 @@ export function useAgentDirectory(): AgentDirectoryView {
         setRaw((current) => ({
           ...current,
           configError: message.ok ? undefined : (message.error ?? '設定未儲存'),
-          ...(message.config ? { config: message.config } : {}),
+          ...(message.config ? { config: completeConfig(message.config) } : {}),
         }));
       } else if (message.type === 'agentCallLogSnapshot') {
         setRaw((current) => ({ ...current, calls: message.calls }));

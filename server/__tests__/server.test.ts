@@ -24,7 +24,7 @@ vi.mock('os', async () => {
 });
 
 // Must import AFTER mock setup
-const { PixelAgentsServer } = await import('../src/server.js');
+const { PixelAgentsServer, StaleServerError } = await import('../src/server.js');
 
 async function postHook(
   port: number,
@@ -191,6 +191,20 @@ describe('PixelAgentsServer', () => {
     expect(config2.port).toBe(config1.port);
     expect(registryFiles()).toHaveLength(1);
     server2.stop();
+  });
+
+  // 12b. A standalone server of a DIFFERENT build (e.g. still running from
+  // before an update) is not reused: its protocol would not match the page
+  // this build serves from disk. The launch stops; it never kills the other.
+  it('standalone refuses to reuse a standalone server of another build', async () => {
+    await server.start({ embedded: false });
+    const [entry] = registryFiles();
+    const file = path.join(registryDir, entry!);
+    const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    fs.writeFileSync(file, JSON.stringify({ ...record, build: 'older-build' }));
+    const server2 = new PixelAgentsServer();
+    await expect(server2.start({ embedded: false })).rejects.toBeInstanceOf(StaleServerError);
+    expect(registryFiles()).toHaveLength(1);
   });
 
   // 13. Capability mismatch: a standalone caller never reuses an embedded server

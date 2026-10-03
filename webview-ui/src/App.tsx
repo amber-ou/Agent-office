@@ -15,6 +15,7 @@ import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
 import { AgentDetailPanel } from './control/AgentDetailPanel.js';
 import { AgentPanel } from './control/AgentPanel.js';
+import { PanelErrorBoundary } from './control/PanelErrorBoundary.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -542,7 +543,9 @@ function App() {
         onClose={() => setIsAgentPanelOpen(false)}
         onSelectAgent={(key) => setSelectedAgentKey(key)}
       />
-      <AgentDetailPanel agentKey={selectedAgentKey} onClose={() => setSelectedAgentKey(null)} />
+      <PanelErrorBoundary resetKey={selectedAgentKey ?? ''}>
+        <AgentDetailPanel agentKey={selectedAgentKey} onClose={() => setSelectedAgentKey(null)} />
+      </PanelErrorBoundary>
 
       <VersionIndicator
         currentVersion={extensionVersion}

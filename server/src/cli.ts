@@ -28,7 +28,7 @@ import {
 import { MAX_PORT, MIN_PORT } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
-import { PixelAgentsServer } from './server.js';
+import { PixelAgentsServer, StaleServerError } from './server.js';
 
 // ── Argument parsing ──────────────────────────────────────────
 
@@ -317,6 +317,16 @@ async function main(): Promise<void> {
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   } catch (err) {
+    if (err instanceof StaleServerError) {
+      // Plain-language: this is what an update leaves behind when the old
+      // window is still open. We never stop another process ourselves.
+      console.error(
+        `\n  另一個版本的 Agent Office 仍在執行（PID ${err.pid}，port ${err.port}）。` +
+          `\n  請先關閉那個 Agent Office 視窗（或在工作管理員結束 PID ${err.pid} 的 node.exe），再重新啟動。` +
+          `\n  A different build of Agent Office is still running (PID ${err.pid}, port ${err.port}); close it, then start again.\n`,
+      );
+      process.exit(1);
+    }
     console.error('Failed to start server:', err);
     process.exit(1);
   }

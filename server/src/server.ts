@@ -23,6 +23,25 @@ import { isServerConfig, isServerTarget } from './serverConfig.js';
 
 export type { ServerConfig } from './serverConfig.js';
 
+/** This process's build stamp (esbuild `define`; undefined when unbundled). */
+const BUILD = process.env['PIXEL_AGENTS_BUILD'];
+
+/**
+ * A standalone launch found a standalone server of a DIFFERENT build still
+ * running. Reusing it would serve this build's page (read from disk) against
+ * the old server's protocol — after an update that blanked the Agent panel.
+ * The old process is not ours to stop, so the launch stops and says so.
+ */
+export class StaleServerError extends Error {
+  constructor(
+    readonly pid: number,
+    readonly port: number,
+  ) {
+    super(`a different build of the standalone server is still running (PID ${pid}, port ${port})`);
+    this.name = 'StaleServerError';
+  }
+}
+
 /** Callback invoked when a hook event is received from a provider's hook script. */
 type HookEventCallback = (providerId: string, event: Record<string, unknown>) => void;
 
@@ -81,6 +100,9 @@ export class PixelAgentsServer {
     // stale file never blocks discovery of a live one.
     const registry = this.readAndPruneRegistry();
     const candidate = registry.find((e) => e.servesSpa === wantsSpa);
+    if (candidate && wantsSpa && candidate.build !== BUILD) {
+      throw new StaleServerError(candidate.pid, candidate.port);
+    }
     if (candidate) {
       this.config = candidate;
       this.ownsServer = false;
@@ -116,6 +138,7 @@ export class PixelAgentsServer {
       startedAt: Date.now(),
       servesSpa: wantsSpa,
       protocol: SERVER_REGISTRY_PROTOCOL_VERSION,
+      ...(BUILD ? { build: BUILD } : {}),
       // Diagnostic-only: forward the debug-log path to the hook script via
       // server.json (env vars don't reach the spawned hook reliably).
       ...(process.env['PIXEL_AGENTS_DEBUG_LOG']

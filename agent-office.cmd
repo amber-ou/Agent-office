@@ -27,3 +27,5 @@ echo Starting Agent Office. Open the address below in your browser.
 echo Close this window to stop the office. Running agents are not affected.
 echo.
 node dist\cli.js %*
+rem  Keep the window open on a failed start so the message stays readable.
+if errorlevel 1 pause

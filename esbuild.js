@@ -9,8 +9,13 @@ const watch = process.argv.includes('--watch');
 const pkgVersion = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'),
 ).version;
+/** Changes on every build, so a standalone launch can tell a still-running
+ *  server from an OLDER build of this checkout (the version number alone
+ *  does not change between local builds). */
+const buildStamp = `${pkgVersion}+${Date.now().toString(36)}`;
 const versionDefine = {
   'process.env.PIXEL_AGENTS_VERSION': JSON.stringify(pkgVersion),
+  'process.env.PIXEL_AGENTS_BUILD': JSON.stringify(buildStamp),
 };
 
 /**

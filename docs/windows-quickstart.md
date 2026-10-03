@@ -21,6 +21,10 @@
 
 關閉這個視窗只會停止 Office，對正在執行的 agent 沒有影響。
 
+**更新後**（`git pull` + `npm.cmd run build`）請先關閉所有 Agent Office 視窗再啟動。舊版本仍在執行時，
+新啟動的視窗會顯示「另一個版本的 Agent Office 仍在執行（PID …）」並停住，不會沿用舊伺服器；
+關掉舊視窗（或在工作管理員結束該 PID 的 node.exe）後再執行一次即可。
+
 ## 設定 GitHub Agent 名單
 
 1. 到 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens，

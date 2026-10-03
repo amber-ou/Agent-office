@@ -18,6 +18,9 @@ export interface ServerConfig extends ServerTarget {
   servesSpa: boolean;
   /** Registry record format version. */
   protocol: number;
+  /** Build stamp of the process that wrote this record (absent from older
+   *  builds). A standalone launch only reuses a server of its own build. */
+  build?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,6 +49,7 @@ export function isServerConfig(value: unknown): value is ServerConfig {
     Number.isSafeInteger(value.startedAt) &&
     (value.startedAt as number) >= 0 &&
     typeof value.servesSpa === 'boolean' &&
-    value.protocol === SERVER_REGISTRY_PROTOCOL_VERSION
+    value.protocol === SERVER_REGISTRY_PROTOCOL_VERSION &&
+    (value.build === undefined || typeof value.build === 'string')
   );
 }
