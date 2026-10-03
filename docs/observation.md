@@ -14,7 +14,23 @@ Agent Office 是 Claude Code 多 agent 的**唯讀觀測介面**。你照常在 
 
 ## 2. 自動探索
 
-### 來源
+Agent 名單有兩個來源，畫面上**一律稱為 Agent**，不再區分 skill／agent：
+
+1. **GitHub agent repo**（2026-10-03 依使用者決定加入）：帳號下名稱以前綴開頭的 repo（預設 `Agent-`，排除 `Agent-office`），每個 repo 就是一個 Agent。
+2. **本機定義**：沒有被任何 repo 對應到的本機 agent，以及列在「本機 Skills 篩選」的本機 skill。
+
+### GitHub 名單
+
+- Office 用唯讀 API 列出 repo（有 token 時 `GET /user/repos`，含私人 repo；沒有時 `GET /users/<帳號>/repos`），並讀取每個 agent repo 預設分支中 `.claude/agents/**.md`、`.claude/skills/<名稱>/SKILL.md` 的 front matter（只取 `name`、`description`）。**不 clone、不下載、不安裝、不寫入 GitHub。**
+- **呼叫名稱**：repo 內定義檔的 `name`；repo 沒有定義檔時，固定規則為「去掉前綴、轉小寫」，例如 `Agent-skill-Retriever` → `skill-retriever`。不做模糊比對。
+- **本機對應**：與呼叫名稱完全相同的本機定義會附屬到該 repo，不會另外出現第二個人物；活動一律算在 repo 這個 Agent 上。
+- 本機找不到對應定義時，人物照樣顯示，但標示「本機未找到定義」。
+- 兩個 repo 對應到同一名稱時，兩者都標示衝突，該名稱的活動不歸屬任何一個。
+- **token**：存在 `~/.agent-office/github-token`（或環境變數 `AGENT_OFFICE_GITHUB_TOKEN`），只送往 `api.github.com`，不寫入 log，也不會傳給任何頁面。修改需要 server token（含 `?token=` 的網址）。建議使用 fine-grained token，權限只開 Contents: Read-only（Metadata 會自動附帶）。
+- **同步**：啟動時、每 10 分鐘、修改設定或 token 時、按「立即同步」時。成功結果快取在 `~/.agent-office/github-roster.json`，離線或同步失敗時沿用上次名單並顯示錯誤。
+- 名單只代表「有哪些 Agent」；是否正在工作仍只依本機 Claude Code 的 hooks／transcript 判斷（見 §3）。
+
+### 本機來源
 
 | 範圍                                       | Agents                          | Skills                                  |
 | ------------------------------------------ | ------------------------------- | --------------------------------------- |

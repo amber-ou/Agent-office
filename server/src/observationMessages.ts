@@ -6,15 +6,21 @@
  *   setDiscoveryConfig   → saves Office's own discovery settings, then
  *                          re-broadcasts the roster. Privileged only: it
  *                          decides which local directories Office reads.
+ *   setGithubToken       → stores (or clears) the read-only GitHub token in
+ *                          ~/.agent-office, then re-syncs. Privileged only.
+ *                          The token is never echoed back to any client.
+ *   syncGithub           → re-reads the GitHub agent repo list now.
  */
 
 import type { AgentStateStore } from './agentStateStore.js';
 import { normalizeDiscoveryConfig, saveDiscoveryConfig } from './control/discoveryConfig.js';
 import { getOfficeStorage } from './control/observationStorage.js';
+import { writeGithubToken } from './githubRoster.js';
 import {
   broadcastNativeAgentRoster,
   rosterMessage,
   scanNativeAgentRosterSnapshot,
+  syncGithubAndBroadcast,
 } from './nativeAgentRoster.js';
 
 type Send = (message: Record<string, unknown>) => void;
@@ -58,6 +64,7 @@ export function handleSetDiscoveryConfig(
     const saved = saveDiscoveryConfig(normalizeDiscoveryConfig(msg['config']));
     send({ type: 'discoveryConfigResult', ok: true, config: saved });
     broadcastNativeAgentRoster(store);
+    void syncGithubAndBroadcast(store);
   } catch (error) {
     send({
       type: 'discoveryConfigResult',
@@ -65,4 +72,36 @@ export function handleSetDiscoveryConfig(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export function handleSetGithubToken(
+  msg: Record<string, unknown>,
+  send: Send,
+  store: AgentStateStore,
+  privileged: boolean,
+): void {
+  if (!privileged) {
+    send({
+      type: 'discoveryConfigResult',
+      ok: false,
+      error: 'not authorized: setting the GitHub token requires the server token',
+    });
+    return;
+  }
+  try {
+    writeGithubToken(typeof msg['token'] === 'string' ? msg['token'] : '');
+    send({ type: 'discoveryConfigResult', ok: true });
+    broadcastNativeAgentRoster(store);
+    void syncGithubAndBroadcast(store);
+  } catch (error) {
+    send({
+      type: 'discoveryConfigResult',
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export function handleSyncGithub(store: AgentStateStore): void {
+  void syncGithubAndBroadcast(store);
 }

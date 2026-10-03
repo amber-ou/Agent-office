@@ -21,6 +21,16 @@
 
 關閉這個視窗只會停止 Office，對正在執行的 agent 沒有影響。
 
+## 設定 GitHub Agent 名單
+
+1. 到 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens，
+   建立一個 token：Repository access 選 All repositories（或只選 `Agent-` 開頭的 repo），
+   Permissions 只開 **Contents: Read-only**。
+2. 在 Agent 面板 →「探索設定」→「GitHub Agent 名單」貼上 token 按「儲存」，再按「立即同步」。
+   帳號留空時使用 token 所屬帳號；前綴預設 `Agent-`，預設排除 `Agent-office`。
+3. 每個 `Agent-` repo 會成為一個 Agent。若顯示「本機未找到定義」，代表這台電腦沒有同名的
+   Claude Code 定義（例如 repo 只有 README），需要在本機安裝或加入它的專案資料夾才能觀測。
+
 ## 升級時會發生什麼
 
 第一次用新版開啟時，若 `%USERPROFILE%\.agent-office\agent-office.db` 需要升級，

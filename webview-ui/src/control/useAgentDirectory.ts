@@ -5,8 +5,9 @@
  * skills, candidate skills, sources, problems, settings), the observed call
  * log (`agentCallLogSnapshot` / `agentCallUpdated`), and the transport's
  * connection state. The only commands are `requestCallLog` and
- * `setDiscoveryConfig` — the latter changes which local sources Office
- * READS; nothing here creates, edits or dispatches an agent.
+ * `setDiscoveryConfig` / `setGithubToken` / `syncGithub` — these change
+ * where Office READS its agent list; nothing here creates, edits or
+ * dispatches an agent.
  *
  * `agents` (per-agent status) is derived once here via
  * `computeAgentSummaries`, so a character, the full list and a single
@@ -20,6 +21,7 @@ import type {
   DiscoveryConfig,
   DiscoveryProblem,
   DiscoverySource,
+  GithubSyncStatus,
   NativeAgentRosterEntry,
 } from '../../../core/src/messages.js';
 import { transport } from '../transport/index.js';
@@ -33,6 +35,7 @@ interface RawState {
   sources: DiscoverySource[];
   problems: DiscoveryProblem[];
   config: DiscoveryConfig | undefined;
+  github: GithubSyncStatus | undefined;
   calls: AgentCallLogEntry[];
   /** True once a roster message arrived — "loading" vs "confirmed none". */
   rosterLoaded: boolean;
@@ -46,6 +49,8 @@ export interface AgentDirectoryView extends RawState {
   agents: AgentSummary[];
   connectionState: TransportState;
   saveDiscoveryConfig: (config: DiscoveryConfig) => void;
+  setGithubToken: (token: string) => void;
+  syncGithub: () => void;
 }
 
 const EMPTY_RAW: RawState = {
@@ -54,6 +59,7 @@ const EMPTY_RAW: RawState = {
   sources: [],
   problems: [],
   config: undefined,
+  github: undefined,
   calls: [],
   rosterLoaded: false,
   scanRoot: undefined,
@@ -79,6 +85,7 @@ export function useAgentDirectory(): AgentDirectoryView {
           sources: message.sources,
           problems: message.problems,
           config: message.config,
+          github: message.github,
           rosterLoaded: true,
           scanRoot: message.root,
         }));
@@ -111,10 +118,18 @@ export function useAgentDirectory(): AgentDirectoryView {
     transport.send({ type: 'setDiscoveryConfig', config });
   }, []);
 
+  const setGithubToken = useCallback((token: string) => {
+    transport.send({ type: 'setGithubToken', token });
+  }, []);
+
+  const syncGithub = useCallback(() => {
+    transport.send({ type: 'syncGithub' });
+  }, []);
+
   const agents = useMemo(
     () => computeAgentSummaries(raw.roster, raw.calls),
     [raw.roster, raw.calls],
   );
 
-  return { ...raw, agents, connectionState, saveDiscoveryConfig };
+  return { ...raw, agents, connectionState, saveDiscoveryConfig, setGithubToken, syncGithub };
 }

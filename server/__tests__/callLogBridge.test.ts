@@ -28,6 +28,7 @@ import {
   setClaudeHome,
   setOfficeDataRoot,
 } from '../src/control/observationStorage.js';
+import { resetGithubRoster } from '../src/githubRoster.js';
 import { notifyTeammateDeparture } from '../src/observationHooks.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { processTranscriptLine, setHookProvider } from '../src/transcriptParser.js';
@@ -175,6 +176,7 @@ beforeEach(() => {
   );
   setClaudeHome(claudeHome);
   setOfficeDataRoot(dataRoot);
+  resetGithubRoster();
   setHookProvider(claudeProvider);
   store = new AgentStateStore();
   broadcasts = [];
@@ -184,6 +186,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetGithubRoster();
   bridge.dispose();
   closeOfficeStorage();
   setOfficeDataRoot(undefined);
@@ -522,6 +525,55 @@ describe('skills and run records (/figma-ui)', () => {
     await bridge.pollRunRecords();
     expect((await call('session-A', 'rec-1')).status).toBe('running');
     expect((await call('session-B', 'rec-2')).status).toBe('running');
+  });
+});
+
+describe('GitHub agent roster', () => {
+  it('attributes activity to the repo character, whatever file shape implements it', async () => {
+    // A cached GitHub listing, as githubRoster.ts writes it after a sync.
+    write(
+      path.join(dataRoot, 'github-roster.json'),
+      JSON.stringify({
+        owner: 'amber-ou',
+        repoPrefix: 'Agent-',
+        fetchedAt: new Date().toISOString(),
+        repos: [
+          {
+            fullName: 'amber-ou/Agent-skill-Retriever',
+            name: 'Agent-skill-Retriever',
+            url: 'https://github.com/amber-ou/Agent-skill-Retriever',
+            private: true,
+            definitions: [],
+          },
+          {
+            fullName: 'amber-ou/Agent-Figma-UI-agent',
+            name: 'Agent-Figma-UI-agent',
+            url: 'https://github.com/amber-ou/Agent-Figma-UI-agent',
+            private: false,
+            definitions: [
+              {
+                kind: 'skill',
+                name: 'figma-ui',
+                description: '',
+                path: '.claude/skills/figma-ui/SKILL.md',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    line(1, toolUse('toolu_1', 'Agent', { subagent_type: 'skill-retriever', description: 'find' }));
+    line(1, slashCommand('rec-1', 'figma-ui'));
+    expect(await call('session-A', 'toolu_1')).toMatchObject({
+      recognized: true,
+      agentFilePath: 'github:amber-ou/Agent-skill-Retriever',
+      sourceKind: 'agent',
+    });
+    expect(await call('session-A', 'rec-1')).toMatchObject({
+      recognized: true,
+      agentFilePath: 'github:amber-ou/Agent-Figma-UI-agent',
+      sourceKind: 'skill',
+    });
   });
 });
 

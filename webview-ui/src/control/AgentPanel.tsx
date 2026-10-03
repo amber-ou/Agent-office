@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '../components/ui/Button.js';
 import { Modal } from '../components/ui/Modal.js';
-import { AGENT_STATUS_LABELS } from './agentDirectory.js';
+import { AGENT_STATUS_LABELS, sourceLabel } from './agentDirectory.js';
 import { agentContentClass, agentModalClass } from './agentPanelStyles.js';
 import {
   activityText,
@@ -100,7 +100,10 @@ export function AgentPanel({ isOpen, onClose, onSelectAgent }: AgentPanelProps) 
               candidates={directory.candidates}
               problems={directory.problems}
               configError={directory.configError}
+              github={directory.github}
               onSave={directory.saveDiscoveryConfig}
+              onSetGithubToken={directory.setGithubToken}
+              onSyncGithub={directory.syncGithub}
             />
           </div>
         ) : (
@@ -150,9 +153,14 @@ export function AgentPanel({ isOpen, onClose, onSelectAgent }: AgentPanelProps) 
                               {agent.name}
                               <span className="text-text-muted text-agent-body">
                                 {' '}
-                                {agent.kind === 'skill' ? 'Skill' : 'Agent'}・
-                                {agent.scope === 'project' ? '專案' : '使用者'}
+                                {sourceLabel(agent.entry)}
                               </span>
+                              {agent.entry.observable === false && !agent.ambiguous && (
+                                <span className="text-warning text-agent-body">
+                                  {' '}
+                                  （本機未找到定義）
+                                </span>
+                              )}
                               {agent.ambiguous && (
                                 <span className="text-warning text-agent-body">
                                   {' '}

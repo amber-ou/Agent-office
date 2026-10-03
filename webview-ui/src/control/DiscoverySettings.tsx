@@ -1,10 +1,10 @@
 /**
- * Discovery settings — which local sources Office READS to find Claude Code
- * agents and skills, and which skills to show as agents.
+ * Discovery settings — where Office READS its agent list: the GitHub agent
+ * repositories (`<owner>/<prefix>*`), plus local Claude Code definitions.
  *
- * These are Office's own settings (`~/.agent-office/discovery.json`). They
- * never create, edit or register an agent: adding a project root only makes
- * Office look at that project's `.claude/agents` and `.claude/skills`.
+ * These are Office's own settings (`~/.agent-office/discovery.json`, and the
+ * GitHub token in `~/.agent-office/github-token`). They never create, edit
+ * or register an agent, and Office never writes to GitHub.
  */
 
 import { useState } from 'react';
@@ -13,6 +13,7 @@ import type {
   DiscoveryConfig,
   DiscoveryProblem,
   DiscoverySource,
+  GithubSyncStatus,
   NativeAgentRosterEntry,
 } from '../../../core/src/messages.js';
 import { Button } from '../components/ui/Button.js';
@@ -24,12 +25,16 @@ interface DiscoverySettingsProps {
   candidates: NativeAgentRosterEntry[];
   problems: DiscoveryProblem[];
   configError: string | undefined;
+  github: GithubSyncStatus | undefined;
   onSave: (config: DiscoveryConfig) => void;
+  onSetGithubToken: (token: string) => void;
+  onSyncGithub: () => void;
 }
 
 const muted = 'text-text-muted text-agent-body';
 const SOURCE_KIND_LABEL = { agent: 'Agents', skill: 'Skills' } as const;
-const SCOPE_LABEL = { user: '使用者', project: '專案' } as const;
+const SCOPE_LABEL = { user: '使用者', project: '專案', github: 'GitHub' } as const;
+const inputClass = 'flex-1 bg-bg-dark border-2 border-border rounded-none px-4 py-1 text-text';
 
 /** Absolute on POSIX (`/…`) or Windows (`C:\…`, `\\server\…`). */
 function looksAbsolute(p: string): boolean {
@@ -42,9 +47,14 @@ export function DiscoverySettings({
   candidates,
   problems,
   configError,
+  github,
   onSave,
+  onSetGithubToken,
+  onSyncGithub,
 }: DiscoverySettingsProps) {
   const [newRoot, setNewRoot] = useState('');
+  const [tokenInput, setTokenInput] = useState('');
+  const [newExclude, setNewExclude] = useState('');
   const [newPattern, setNewPattern] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
 
@@ -67,6 +77,9 @@ export function DiscoverySettings({
       save({ projectRoots: [...config.projectRoots, value] });
   };
 
+  const saveGithub = (next: Partial<DiscoveryConfig['github']>) =>
+    save({ github: { ...config.github, ...next } });
+
   const addPattern = (pattern: string) => {
     const value = pattern.trim();
     if (!value || config.skillInclude.includes(value)) return;
@@ -76,10 +89,130 @@ export function DiscoverySettings({
   return (
     <div className="flex flex-col gap-4 text-agent-body">
       <p className={muted}>
-        這些設定只決定 Office 讀取哪些本機位置，不會建立或修改任何
-        Agent。來源目錄不存在時顯示「未找到」，Office 不會替你建立。
+        這些設定只決定 Office 從哪裡讀取 Agent 名單，不會建立或修改任何 Agent，也不會寫入
+        GitHub。來源目錄不存在時顯示「未找到」，Office 不會替你建立。
       </p>
 
+      <section>
+        <h4 className="text-accent-bright text-agent-heading mb-2">GitHub Agent 名單</h4>
+        <p className={muted}>
+          帳號下名稱以前綴開頭的 repo，每個都是一個 Agent。repo 裡的 .claude
+          定義檔決定呼叫名稱；沒有定義檔時，用 repo 名稱去掉前綴、轉小寫（Agent-skill-Retriever →
+          skill-retriever）。
+        </p>
+        <div className="border border-border mt-2">
+          <Checkbox
+            label="從 GitHub 讀取 Agent 名單"
+            checked={config.github.enabled}
+            onChange={() => saveGithub({ enabled: !config.github.enabled })}
+          />
+        </div>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 mt-2 items-center">
+          <span className={muted}>帳號</span>
+          <input
+            className={inputClass}
+            placeholder={
+              github?.owner ? `（token 所屬帳號：${github.owner}）` : 'GitHub 帳號，例如 amber-ou'
+            }
+            key={`owner:${config.github.owner}`}
+            defaultValue={config.github.owner}
+            onBlur={(e) => {
+              if (e.target.value.trim() !== config.github.owner)
+                saveGithub({ owner: e.target.value.trim() });
+            }}
+          />
+          <span className={muted}>repo 前綴</span>
+          <input
+            className={inputClass}
+            key={`prefix:${config.github.repoPrefix}`}
+            defaultValue={config.github.repoPrefix}
+            onBlur={(e) => {
+              if (e.target.value.trim() !== config.github.repoPrefix)
+                saveGithub({ repoPrefix: e.target.value.trim() });
+            }}
+          />
+        </div>
+        <p className={`${muted} mt-2`}>排除的 repo：</p>
+        <ul className="flex flex-wrap gap-2 mt-1">
+          {config.github.exclude.map((name) => (
+            <li key={name} className="flex items-center gap-2 border border-border px-4 py-1">
+              <span>{name}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  saveGithub({ exclude: config.github.exclude.filter((n) => n !== name) })
+                }
+              >
+                ×
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex gap-2 mt-2">
+          <input
+            className={inputClass}
+            placeholder="repo 名稱，例如 Agent-office"
+            value={newExclude}
+            onChange={(e) => setNewExclude(e.target.value)}
+          />
+          <Button
+            size="sm"
+            onClick={() => {
+              const value = newExclude.trim();
+              setNewExclude('');
+              if (value && !config.github.exclude.includes(value))
+                saveGithub({ exclude: [...config.github.exclude, value] });
+            }}
+          >
+            排除
+          </Button>
+        </div>
+
+        <p className={`${muted} mt-3`}>
+          GitHub token（唯讀即可，用於列出私人 repo）：
+          {github?.tokenSet ? (github.tokenFromEnv ? '已由環境變數設定' : '已設定') : '未設定'}
+        </p>
+        <div className="flex gap-2 mt-1">
+          <input
+            className={inputClass}
+            type="password"
+            autoComplete="off"
+            placeholder={github?.tokenSet ? '輸入新 token 以取代' : '貼上 GitHub token'}
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+          />
+          <Button
+            size="sm"
+            onClick={() => {
+              if (!tokenInput.trim()) return;
+              onSetGithubToken(tokenInput.trim());
+              setTokenInput('');
+            }}
+          >
+            儲存
+          </Button>
+          {github?.tokenSet && !github.tokenFromEnv && (
+            <Button size="sm" variant="ghost" onClick={() => onSetGithubToken('')}>
+              清除
+            </Button>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-4 mt-2">
+          <span className={github?.error ? 'text-warning' : muted}>
+            {github?.error
+              ? `同步失敗：${github.error}`
+              : github?.lastSyncAt
+                ? `已同步 ${github.repoCount} 個 repo（${new Date(github.lastSyncAt).toLocaleString()}）`
+                : '尚未同步'}
+          </span>
+          <Button size="sm" onClick={onSyncGithub}>
+            立即同步
+          </Button>
+        </div>
+      </section>
+
+      <h4 className="text-accent-bright text-agent-heading">本機定義</h4>
       <div className="border border-border">
         <Checkbox
           label="掃描使用者 Agents（~/.claude/agents）"
@@ -122,7 +255,7 @@ export function DiscoverySettings({
         )}
         <div className="flex gap-2 mt-2">
           <input
-            className="flex-1 bg-bg-dark border-2 border-border rounded-none px-4 py-1 text-text"
+            className={inputClass}
             placeholder="專案根目錄的完整路徑"
             value={newRoot}
             onChange={(e) => setNewRoot(e.target.value)}
@@ -136,9 +269,10 @@ export function DiscoverySettings({
       </section>
 
       <section>
-        <h4 className="text-accent-bright text-agent-heading mb-2">顯示為 Agent 的 Skills</h4>
+        <h4 className="text-accent-bright text-agent-heading mb-2">本機 Skills 篩選</h4>
         <p className={muted}>
-          Skill 多半是輔助工具，只有列在這裡的名稱才會成為人物（可用 * 萬用字元）。
+          只影響不在 GitHub 名單中的本機 skill：多半是輔助工具，只有列在這裡的名稱才會成為人物（可用
+          * 萬用字元）。GitHub 名單中的 Agent 不受此限制。
         </p>
         <ul className="flex flex-wrap gap-2 mt-2">
           {config.skillInclude.map((pattern) => (

@@ -43,6 +43,8 @@ import {
 } from '../../server/src/layoutPersistence.js';
 import {
   handleSetDiscoveryConfig,
+  handleSetGithubToken,
+  handleSyncGithub,
   sendObservationSnapshot,
 } from '../../server/src/observationMessages.js';
 import { PathSet } from '../../server/src/pathKey.js';
@@ -524,6 +526,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.store,
           true,
         );
+      } else if (message.type === 'setGithubToken') {
+        handleSetGithubToken(message, (m) => void this.webview?.postMessage(m), this.store, true);
+      } else if (message.type === 'syncGithub') {
+        handleSyncGithub(this.store);
       } else if (message.type === 'webviewReady') {
         // Flush any messages buffered while the iframe was loading. Mark
         // ready BEFORE flush so re-entrant broadcasts (triggered by handlers

@@ -152,6 +152,8 @@ components:
         # Agent Office observation
         - $ref: '#/components/schemas/RequestCallLog'
         - $ref: '#/components/schemas/SetDiscoveryConfig'
+        - $ref: '#/components/schemas/SetGithubToken'
+        - $ref: '#/components/schemas/SyncGithub'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1240,14 +1242,35 @@ components:
         projectRoot:
           description: For project scope, the configured project root.
           type: string
+        repoFullName:
+          description: GitHub entries — the repository this agent is.
+          type: string
+        repoUrl:
+          type: string
+        repoPrivate:
+          type: boolean
+        invocationNames:
+          description: Names activity is matched by (subagent_type, /name).
+          type: array
+          items:
+            type: string
+        localFilePath:
+          description: GitHub entries — the local definition the repo was matched to.
+          type: string
+        observable:
+          description: False when no local definition was found for this agent.
+          type: boolean
+        note:
+          type: string
 
     DefinitionKind:
       type: string
       enum: [agent, skill]
 
     DiscoveryScope:
+      description: github = an agent repository from the GitHub list.
       type: string
-      enum: [user, project]
+      enum: [user, project, github]
 
     AgentCallKind:
       description: How the activity was invoked (not a status).
@@ -1274,7 +1297,7 @@ components:
       description: Office's own discovery settings (~/.agent-office/discovery.json).
       type: object
       additionalProperties: false
-      required: [includeUserAgents, includeUserSkills, projectRoots, skillInclude]
+      required: [includeUserAgents, includeUserSkills, projectRoots, skillInclude, github]
       properties:
         includeUserAgents:
           type: boolean
@@ -1286,10 +1309,49 @@ components:
           items:
             type: string
         skillInclude:
-          description: Skill names (exact, or with * wildcards) shown as agents.
+          description: Local skill names (exact, or with * wildcards) shown as agents.
           type: array
           items:
             type: string
+        github:
+          $ref: '#/components/schemas/GithubDiscoveryConfig'
+
+    GithubDiscoveryConfig:
+      description: Which GitHub repositories are agents — owner/repoPrefix*, minus exclude.
+      type: object
+      additionalProperties: false
+      required: [enabled, owner, repoPrefix, exclude]
+      properties:
+        enabled:
+          type: boolean
+        owner:
+          description: Empty = the account the token belongs to.
+          type: string
+        repoPrefix:
+          type: string
+        exclude:
+          type: array
+          items:
+            type: string
+
+    GithubSyncStatus:
+      description: State of the read-only GitHub listing. Never carries the token.
+      type: object
+      additionalProperties: false
+      required: [tokenSet, tokenFromEnv, repoCount]
+      properties:
+        tokenSet:
+          type: boolean
+        tokenFromEnv:
+          type: boolean
+        owner:
+          type: string
+        lastSyncAt:
+          type: string
+        repoCount:
+          type: integer
+        error:
+          type: string
 
     DiscoverySource:
       type: object
@@ -1327,7 +1389,7 @@ components:
         whenever a source changes on disk.
       type: object
       additionalProperties: false
-      required: [type, agents, candidates, sources, problems, config, root]
+      required: [type, agents, candidates, sources, problems, config, github, root]
       properties:
         type:
           const: nativeAgentRoster
@@ -1349,6 +1411,8 @@ components:
             $ref: '#/components/schemas/DiscoveryProblem'
         config:
           $ref: '#/components/schemas/DiscoveryConfig'
+        github:
+          $ref: '#/components/schemas/GithubSyncStatus'
         root:
           description: The user-level agents directory, named when nothing was found.
           type: string
@@ -1521,3 +1585,25 @@ components:
           const: setDiscoveryConfig
         config:
           $ref: '#/components/schemas/DiscoveryConfig'
+
+    SetGithubToken:
+      description: |
+        Store (or, with an empty string, clear) the read-only GitHub token in
+        ~/.agent-office. Privileged (server token) only. Never echoed back.
+      type: object
+      additionalProperties: false
+      required: [type, token]
+      properties:
+        type:
+          const: setGithubToken
+        token:
+          type: string
+
+    SyncGithub:
+      description: Re-read the GitHub agent repository list now.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: syncGithub

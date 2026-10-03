@@ -13,7 +13,12 @@ import {
 } from './configPersistence.js';
 import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT } from './constants.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
-import { handleSetDiscoveryConfig, sendObservationSnapshot } from './observationMessages.js';
+import {
+  handleSetDiscoveryConfig,
+  handleSetGithubToken,
+  handleSyncGithub,
+  sendObservationSnapshot,
+} from './observationMessages.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
@@ -277,6 +282,14 @@ export function handleClientMessage(
 
     case 'setDiscoveryConfig':
       handleSetDiscoveryConfig(msg, send, store, ctx.privileged === true);
+      break;
+
+    case 'setGithubToken':
+      handleSetGithubToken(msg, send, store, ctx.privileged === true);
+      break;
+
+    case 'syncGithub':
+      handleSyncGithub(store);
       break;
 
     default:

@@ -68,7 +68,9 @@ export type ClientMessage =
   | SetShowAreas
   | RequestDiagnostics
   | RequestCallLog
-  | SetDiscoveryConfig;
+  | SetDiscoveryConfig
+  | SetGithubToken
+  | SyncGithub;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -330,6 +332,7 @@ export interface NativeAgentRoster {
   sources: DiscoverySource[];
   problems: DiscoveryProblem[];
   config: DiscoveryConfig;
+  github: GithubSyncStatus;
   root: string;
 }
 
@@ -341,11 +344,18 @@ export interface NativeAgentRosterEntry {
   kind: DefinitionKind;
   scope: DiscoveryScope;
   projectRoot?: string;
+  repoFullName?: string;
+  repoUrl?: string;
+  repoPrivate?: boolean;
+  invocationNames?: string[];
+  localFilePath?: string;
+  observable?: boolean;
+  note?: string;
 }
 
 export type DefinitionKind = 'agent' | 'skill';
 
-export type DiscoveryScope = 'user' | 'project';
+export type DiscoveryScope = 'user' | 'project' | 'github';
 
 export interface DiscoverySource {
   kind: DefinitionKind;
@@ -365,6 +375,23 @@ export interface DiscoveryConfig {
   includeUserSkills: boolean;
   projectRoots: string[];
   skillInclude: string[];
+  github: GithubDiscoveryConfig;
+}
+
+export interface GithubDiscoveryConfig {
+  enabled: boolean;
+  owner: string;
+  repoPrefix: string;
+  exclude: string[];
+}
+
+export interface GithubSyncStatus {
+  tokenSet: boolean;
+  tokenFromEnv: boolean;
+  owner?: string;
+  lastSyncAt?: string;
+  repoCount: number;
+  error?: string;
 }
 
 export interface AgentCallLogSnapshot {
@@ -561,4 +588,13 @@ export interface RequestCallLog {
 export interface SetDiscoveryConfig {
   type: 'setDiscoveryConfig';
   config: DiscoveryConfig;
+}
+
+export interface SetGithubToken {
+  type: 'setGithubToken';
+  token: string;
+}
+
+export interface SyncGithub {
+  type: 'syncGithub';
 }

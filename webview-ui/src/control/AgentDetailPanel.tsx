@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 
 import { Modal } from '../components/ui/Modal.js';
-import { AGENT_STATUS_LABELS } from './agentDirectory.js';
+import { AGENT_STATUS_LABELS, sourceLabel } from './agentDirectory.js';
 import { agentContentClass, agentModalClass } from './agentPanelStyles.js';
 import {
   activityText,
@@ -71,14 +71,33 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
             <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 text-agent-body">
               <span className={rowLabel}>來源</span>
               <span className="break-all">
-                {agent.kind === 'skill' ? 'Skill' : 'Agent'}・
-                {agent.scope === 'project' ? `專案 ${agent.projectRoot ?? ''}` : '使用者'}
+                {sourceLabel(agent.entry)}
+                {agent.entry.repoFullName && <> {agent.entry.repoFullName}</>}
+                {agent.entry.repoUrl && (
+                  <>
+                    <br />
+                    <span className={rowLabel}>{agent.entry.repoUrl}</span>
+                  </>
+                )}
                 <br />
-                <span className={rowLabel}>{agent.key}</span>
-                {agent.ambiguous && (
+                <span className={rowLabel}>
+                  {agent.entry.scope === 'github'
+                    ? `本機定義：${agent.entry.localFilePath ?? '未找到'}`
+                    : agent.key}
+                </span>
+                {agent.entry.note && (
+                  <>
+                    <br />
+                    <span className="text-warning">{agent.entry.note}</span>
+                  </>
+                )}
+                {agent.ambiguous && !agent.entry.note && (
                   <span className="text-warning"> （名稱衝突：活動不會歸屬到這個定義）</span>
                 )}
               </span>
+
+              <span className={rowLabel}>呼叫名稱</span>
+              <span>{(agent.entry.invocationNames ?? [agent.name]).join('、')}</span>
 
               <span className={rowLabel}>狀態</span>
               <span>{AGENT_STATUS_LABELS[agent.status]}</span>

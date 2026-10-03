@@ -25,7 +25,18 @@ import * as path from 'node:path';
 import { parseNativeAgentFile, parseSkillFile } from './nativeAgentFile.js';
 
 export type DefinitionKind = 'agent' | 'skill';
-export type DiscoveryScope = 'user' | 'project';
+/** `github`: an entry that comes from the GitHub repo list (agentRoster.ts). */
+export type DiscoveryScope = 'user' | 'project' | 'github';
+
+/** Which GitHub repositories are agents: `<owner>/<repoPrefix>*`, minus `exclude`. */
+export interface GithubDiscoveryConfig {
+  enabled: boolean;
+  /** Repository owner. Empty = the account the token belongs to. */
+  owner: string;
+  repoPrefix: string;
+  /** Repository names (not full names) that are not agents, e.g. Office itself. */
+  exclude: string[];
+}
 
 /** Office's own discovery settings — not an agent definition. */
 export interface DiscoveryConfig {
@@ -35,8 +46,10 @@ export interface DiscoveryConfig {
   includeUserSkills: boolean;
   /** Local project roots whose `.claude/agents` and `.claude/skills` are scanned. */
   projectRoots: string[];
-  /** Skill names (exact, or with `*` wildcards) shown as agents. */
+  /** Local skill names (exact, or with `*` wildcards) shown as agents when
+   *  no GitHub repo already claims them. */
   skillInclude: string[];
+  github: GithubDiscoveryConfig;
 }
 
 export const DEFAULT_DISCOVERY_CONFIG: DiscoveryConfig = {
@@ -45,6 +58,7 @@ export const DEFAULT_DISCOVERY_CONFIG: DiscoveryConfig = {
   projectRoots: [],
   // The first skill workflow Office observes; editable in the Agent panel.
   skillInclude: ['figma-ui'],
+  github: { enabled: true, owner: '', repoPrefix: 'Agent-', exclude: ['Agent-office'] },
 };
 
 export interface DiscoverySource {
@@ -70,6 +84,19 @@ export interface NativeAgentRosterEntry {
   kind: DefinitionKind;
   scope: DiscoveryScope;
   projectRoot?: string;
+  /** GitHub entries: the repository this agent is. */
+  repoFullName?: string;
+  repoUrl?: string;
+  repoPrivate?: boolean;
+  /** Names activity is matched by (`subagent_type`, `/name`). */
+  invocationNames?: string[];
+  /** GitHub entries: the local definition file the repo was matched to. */
+  localFilePath?: string;
+  /** False when no local definition was found, so Claude Code on this
+   *  machine cannot run it under these names. */
+  observable?: boolean;
+  /** Why the entry is not (fully) observable, or is ambiguous. */
+  note?: string;
 }
 
 export interface DiscoveryProblem {

@@ -87,6 +87,8 @@ export interface AgentSummary {
   kind: NativeAgentRosterEntry['kind'];
   scope: NativeAgentRosterEntry['scope'];
   projectRoot?: string;
+  /** The full roster entry (repo, invocation names, local file, notes). */
+  entry: NativeAgentRosterEntry;
   status: AgentStatus;
   currentCall?: AgentCallLogEntry;
   /** Every call recorded for this agent, newest first. */
@@ -124,10 +126,17 @@ export function computeAgentSummaries(
       kind: agent.kind,
       scope: agent.scope,
       ...(agent.projectRoot ? { projectRoot: agent.projectRoot } : {}),
+      entry: agent,
       status,
       currentCall,
       history: agentCalls,
       everCalled: agentCalls.length > 0,
     };
   });
+}
+
+/** One short source label — no Skill/Agent split: every entry is an Agent. */
+export function sourceLabel(entry: NativeAgentRosterEntry): string {
+  if (entry.scope === 'github') return entry.repoPrivate ? 'GitHub・私人' : 'GitHub';
+  return entry.scope === 'project' ? '本機專案' : '本機';
 }

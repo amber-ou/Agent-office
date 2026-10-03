@@ -25,13 +25,13 @@ import type {
   AgentCall,
   AgentCallStatus,
   EvidenceSource,
-  NativeAgentRosterEntry,
+  RosterIdentity,
 } from '../../storage/src/index.js';
-import { resolveDefinition, summarizeActivity } from '../../storage/src/index.js';
+import { summarizeActivity } from '../../storage/src/index.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type { OfficeStorage } from './control/observationStorage.js';
 import { getOfficeStorage } from './control/observationStorage.js';
-import { scanNativeAgentRoster } from './nativeAgentRoster.js';
+import { resolveRosterIdentity } from './nativeAgentRoster.js';
 import type { TeammateDeparture } from './observationHooks.js';
 import { setTeammateDepartureObserver } from './observationHooks.js';
 import type { RunRecord } from './runRecords.js';
@@ -78,8 +78,9 @@ interface OpenInvocation {
 }
 
 export interface CallLogBridgeOptions {
-  /** Inject a roster (tests). Defaults to a fresh discovery scan. */
-  roster?: () => readonly NativeAgentRosterEntry[];
+  /** Inject identity resolution (tests). Defaults to the live roster
+   *  (GitHub agent repos merged with local definitions). */
+  resolve?: (name: string, kind: 'agent' | 'skill', cwd: string | undefined) => RosterIdentity;
   /** Run-record poll cadence; 0 disables the poll (tests drive it). */
   runRecordPollMs?: number;
 }
@@ -101,7 +102,7 @@ export function installCallLogBridge(
   options: CallLogBridgeOptions = {},
 ): CallLogBridge {
   installed?.dispose();
-  const roster = options.roster ?? scanNativeAgentRoster;
+  const resolve = options.resolve ?? resolveRosterIdentity;
   const open = new Map<string, OpenInvocation>();
   const sessionByAgentId = new Map<number, string>();
   let queue: Promise<unknown> = Promise.resolve();
@@ -175,7 +176,7 @@ export function installCallLogBridge(
 
   function startInvocation(
     inv: OpenInvocation,
-    identity: { recognized: boolean; entry?: NativeAgentRosterEntry },
+    identity: RosterIdentity,
     activitySummary: string | undefined,
   ): void {
     open.set(key(inv.sessionId, inv.toolUseId), inv);
@@ -184,7 +185,10 @@ export function installCallLogBridge(
         agentName: inv.name,
         recognized: identity.recognized,
         ...(identity.entry
-          ? { agentFilePath: identity.entry.filePath, sourceKind: identity.entry.kind }
+          ? {
+              agentFilePath: identity.entry.filePath,
+              sourceKind: identity.localEntry?.kind ?? identity.entry.kind,
+            }
           : {}),
         kind: inv.kind,
         parentSessionId: inv.sessionId,
@@ -205,7 +209,7 @@ export function installCallLogBridge(
       case 'delegateStart': {
         if (open.has(key(event.sessionId, event.toolUseId))) return;
         const cwd = event.cwd ?? undefined;
-        const identity = resolveDefinition(event.subagentType, 'agent', roster(), cwd);
+        const identity = resolve(event.subagentType, 'agent', cwd);
         startInvocation(
           {
             sessionId: event.sessionId,
@@ -283,7 +287,7 @@ export function installCallLogBridge(
       }
       case 'skillStart': {
         const cwd = event.cwd ?? undefined;
-        const identity = resolveDefinition(event.skill, 'skill', roster(), cwd);
+        const identity = resolve(event.skill, 'skill', cwd);
         // Only skills shown as agents are tracked; helper skills leave no row.
         if (!identity.recognized || !identity.entry) return;
         // One invocation per skill per session at a time: a slash command and
@@ -299,7 +303,9 @@ export function installCallLogBridge(
             name: event.skill,
             kind: 'skill',
             ...(cwd ? { cwd } : {}),
-            ...(identity.entry.projectRoot ? { projectRoot: identity.entry.projectRoot } : {}),
+            ...((identity.localEntry?.projectRoot ?? identity.entry.projectRoot)
+              ? { projectRoot: identity.localEntry?.projectRoot ?? identity.entry.projectRoot }
+              : {}),
             startedAt: Date.now(),
             // `continue <run-id>` / `resume <run-id>` name the run outright.
             ...(runIdFromInvocationArgs(event.skill, event.args)

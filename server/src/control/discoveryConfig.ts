@@ -10,7 +10,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import type { DiscoveryConfig } from '../../../storage/src/index.js';
+import type { DiscoveryConfig, GithubDiscoveryConfig } from '../../../storage/src/index.js';
 import { DEFAULT_DISCOVERY_CONFIG } from '../../../storage/src/index.js';
 import { getOfficeDataRoot } from './observationStorage.js';
 
@@ -59,6 +59,24 @@ export function normalizeDiscoveryConfig(
         : base.includeUserSkills,
     projectRoots: projectRoots ?? [...base.projectRoots],
     skillInclude: stringList(obj['skillInclude'], MAX_SKILL_PATTERNS) ?? [...base.skillInclude],
+    github: normalizeGithub(obj['github'], base.github),
+  };
+}
+
+const GITHUB_NAME = /^[A-Za-z0-9._-]{0,100}$/;
+
+function normalizeGithub(raw: unknown, base: GithubDiscoveryConfig): GithubDiscoveryConfig {
+  const obj =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const text = (value: unknown, fallback: string) =>
+    typeof value === 'string' && GITHUB_NAME.test(value.trim()) ? value.trim() : fallback;
+  return {
+    enabled: typeof obj['enabled'] === 'boolean' ? obj['enabled'] : base.enabled,
+    owner: text(obj['owner'], base.owner),
+    repoPrefix: text(obj['repoPrefix'], base.repoPrefix),
+    exclude: stringList(obj['exclude'], MAX_SKILL_PATTERNS)?.filter((n) => GITHUB_NAME.test(n)) ?? [
+      ...base.exclude,
+    ],
   };
 }
 

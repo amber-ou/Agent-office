@@ -22,10 +22,10 @@ export const CALL_STATUS_LABELS: Record<AgentCallStatus, string> = {
 };
 
 export const CALL_KIND_LABELS: Record<AgentCallKind, string> = {
-  subagent: '子 Agent',
-  background: '背景子 Agent',
+  subagent: '委派',
+  background: '背景委派',
   teammate: '隊友',
-  skill: 'Skill',
+  skill: '指令呼叫',
 };
 
 /** What a status rests on — shown so "已結束" is never read as "成功". */

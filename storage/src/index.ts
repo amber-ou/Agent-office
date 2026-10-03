@@ -26,12 +26,20 @@ export type {
 } from './callLog.js';
 export { ACTIVITY_SUMMARY_MAX, OPEN_CALL_STATUSES, summarizeActivity } from './callLog.js';
 export type {
+  GithubRepoDefinition,
+  GithubRepoInfo,
+  MergedRoster,
+  RosterIdentity,
+} from './files/agentRoster.js';
+export { derivedInvocationName, githubKey, mergeRoster } from './files/agentRoster.js';
+export type {
   DefinitionKind,
   DiscoveryConfig,
   DiscoveryProblem,
   DiscoveryResult,
   DiscoveryScope,
   DiscoverySource,
+  GithubDiscoveryConfig,
   NativeAgentRosterEntry,
   ResolvedIdentity,
 } from './files/nativeAgentDiscovery.js';

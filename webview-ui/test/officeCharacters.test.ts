@@ -29,7 +29,14 @@ const roster = (agents: NativeAgentRosterEntry[]): NativeAgentRoster => ({
   candidates: [],
   sources: [],
   problems: [],
-  config: { includeUserAgents: true, includeUserSkills: true, projectRoots: [], skillInclude: [] },
+  config: {
+    includeUserAgents: true,
+    includeUserSkills: true,
+    projectRoots: [],
+    skillInclude: [],
+    github: { enabled: false, owner: '', repoPrefix: 'Agent-', exclude: [] },
+  },
+  github: { tokenSet: false, tokenFromEnv: false, repoCount: 0 },
   root: '/home/user/.claude/agents',
 });
 
