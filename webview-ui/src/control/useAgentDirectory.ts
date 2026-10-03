@@ -43,6 +43,10 @@ interface RawState {
   scanRoot: string | undefined;
   /** Last setDiscoveryConfig outcome, for the settings form. */
   configError: string | undefined;
+  /** Whether this connection may change discovery settings (undefined
+   *  until the server says). Standalone needs the CURRENT server token in
+   *  the page URL; an old tab from before a restart cannot edit. */
+  canEdit: boolean | undefined;
 }
 
 export interface AgentDirectoryView extends RawState {
@@ -64,6 +68,7 @@ const EMPTY_RAW: RawState = {
   rosterLoaded: false,
   scanRoot: undefined,
   configError: undefined,
+  canEdit: undefined,
 };
 
 export function useAgentDirectory(): AgentDirectoryView {
@@ -72,7 +77,16 @@ export function useAgentDirectory(): AgentDirectoryView {
 
   useEffect(() => {
     setConnectionState(transport.state);
-    return transport.onStateChange(setConnectionState);
+    let previous = transport.state;
+    return transport.onStateChange((state) => {
+      setConnectionState(state);
+      // Back after a drop (e.g. Office restarted): ask again, so the roster,
+      // call log and edit access describe the server we reconnected to.
+      if (state === 'connected' && previous === 'reconnecting') {
+        transport.send({ type: 'requestCallLog' });
+      }
+      previous = state;
+    });
   }, []);
 
   useEffect(() => {
@@ -89,6 +103,8 @@ export function useAgentDirectory(): AgentDirectoryView {
           rosterLoaded: true,
           scanRoot: message.root,
         }));
+      } else if (message.type === 'observationAccess') {
+        setRaw((current) => ({ ...current, canEdit: message.canEdit }));
       } else if (message.type === 'discoveryConfigResult') {
         setRaw((current) => ({
           ...current,
@@ -109,7 +125,7 @@ export function useAgentDirectory(): AgentDirectoryView {
       }
     });
     // The server pushes both on the ready handshake; this covers a panel
-    // opened later, and a reconnect.
+    // opened later (a reconnect is handled by the state listener above).
     transport.send({ type: 'requestCallLog' });
     return unsubscribe;
   }, []);

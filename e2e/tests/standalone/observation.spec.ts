@@ -128,4 +128,24 @@ test.describe('Standalone / observation', () => {
       true,
     );
   });
+
+  test('discovery settings say up front when an old tab cannot change them @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    await page.getByRole('button', { name: 'Agent', exact: true }).click();
+    await page.getByRole('button', { name: '探索設定' }).click();
+    const githubToggle = page.getByRole('button', { name: '從 GitHub 讀取 Agent 名單' });
+    // The page opened from the printed (tokened) URL can edit.
+    await expect(githubToggle).toBeEnabled();
+    await expect(page.getByText('此頁面只能檢視')).toHaveCount(0);
+
+    // Office restarts: a new token, and this tab reconnects with the old one.
+    // Rather than rejecting every click silently, the form says why and
+    // where to go.
+    await standalone.stopHost();
+    await standalone.startHost();
+    await expect(page.getByText('此頁面只能檢視')).toBeVisible({ timeout: 20_000 });
+    await expect(githubToggle).toBeDisabled();
+  });
 });

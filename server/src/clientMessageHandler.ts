@@ -277,7 +277,7 @@ export function handleClientMessage(
     }
 
     case 'requestCallLog':
-      sendObservationSnapshot(send);
+      sendObservationSnapshot(send, ctx.privileged === true);
       break;
 
     case 'setDiscoveryConfig':
@@ -391,7 +391,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // 1a. Agent Office observation: discovered roster + recent call log. Sent
   // to every client (read-only observed activity — the same trust level as
   // the rest of this live broadcast).
-  sendObservationSnapshot(send);
+  sendObservationSnapshot(send, ctx.privileged === true);
 
   // 2. Assets (from server cache, loaded at startup via pngjs)
   if (cache) {

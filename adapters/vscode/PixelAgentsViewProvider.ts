@@ -517,7 +517,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         }
       } else if (message.type === 'requestCallLog') {
-        sendObservationSnapshot((m) => void this.webview?.postMessage(m));
+        sendObservationSnapshot((m) => void this.webview?.postMessage(m), true);
       } else if (message.type === 'setDiscoveryConfig') {
         // The VS Code webview is the extension's own surface — privileged.
         handleSetDiscoveryConfig(
@@ -549,7 +549,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           subagentToolNames: [...claudeProvider.subagentToolNames],
         });
         // Agent Office observation: discovered roster + recent call log.
-        sendObservationSnapshot((m) => void this.webview?.postMessage(m));
+        sendObservationSnapshot((m) => void this.webview?.postMessage(m), true);
 
         // Settings + folder→Area mappings MUST be dispatched BEFORE restoreAgents
         // and the auto-spawn path. Both paths emit `agentCreated` postMessages via

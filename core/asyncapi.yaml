@@ -123,6 +123,7 @@ components:
         - $ref: '#/components/schemas/AgentCallLogSnapshot'
         - $ref: '#/components/schemas/AgentCallUpdated'
         - $ref: '#/components/schemas/DiscoveryConfigResult'
+        - $ref: '#/components/schemas/ObservationAccess'
       discriminator: type
 
     ClientMessage:
@@ -1563,6 +1564,21 @@ components:
           $ref: '#/components/schemas/DiscoveryConfig'
         error:
           type: string
+
+    ObservationAccess:
+      description: >-
+        Sent to one client with its observation snapshot: whether this
+        connection may change discovery settings and the GitHub token
+        (privileged — standalone needs the current server token in the
+        page URL; the token changes on every start).
+      type: object
+      additionalProperties: false
+      required: [type, canEdit]
+      properties:
+        type:
+          const: observationAccess
+        canEdit:
+          type: boolean
 
     RequestCallLog:
       description: Ask for the current discovered roster and recent call log.

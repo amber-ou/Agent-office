@@ -100,6 +100,7 @@ export function AgentPanel({ isOpen, onClose, onSelectAgent }: AgentPanelProps) 
               candidates={directory.candidates}
               problems={directory.problems}
               configError={directory.configError}
+              canEdit={directory.canEdit}
               github={directory.github}
               onSave={directory.saveDiscoveryConfig}
               onSetGithubToken={directory.setGithubToken}

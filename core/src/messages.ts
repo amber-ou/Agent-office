@@ -42,7 +42,8 @@ export type ServerMessage =
   | NativeAgentRoster
   | AgentCallLogSnapshot
   | AgentCallUpdated
-  | DiscoveryConfigResult;
+  | DiscoveryConfigResult
+  | ObservationAccess;
 
 export type ClientMessage =
   | WebviewReady
@@ -464,6 +465,11 @@ export interface DiscoveryConfigResult {
   ok: boolean;
   config?: DiscoveryConfig;
   error?: string;
+}
+
+export interface ObservationAccess {
+  type: 'observationAccess';
+  canEdit: boolean;
 }
 
 export interface WebviewReady {

@@ -14,7 +14,7 @@
    ```
 
 3. 雙擊 **`agent-office.cmd`**（或執行 `node .\dist\cli.js`），開啟它印出的網址。
-   網址含 `?token=…`，請勿外流；沒有 token 的頁面只能觀看，不能改探索設定或 hooks。
+   網址含 `?token=…`，請勿外流；沒有 token 的頁面只能觀看，不能改探索設定或 hooks。token 每次啟動都會換新，所以重新啟動 Office 後，舊分頁會變成「只能檢視」，探索設定最上方會出現提示；請改開視窗中印出的新網址。
 4. 首次開啟時，辦公室的引導會詢問是否安裝 Claude Code hooks（寫入
    `~/.claude/settings.json`，只加入 Office 自己的項目）。建議安裝：等待／權限狀態只有
    hooks 才能可靠取得。

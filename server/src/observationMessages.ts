@@ -2,7 +2,9 @@
  * Agent Office observation messages, shared by both surfaces (standalone
  * `clientMessageHandler.ts` and the VS Code provider) so neither can drift.
  *
- *   requestCallLog       → nativeAgentRoster + agentCallLogSnapshot (read-only)
+ *   requestCallLog       → nativeAgentRoster + agentCallLogSnapshot (read-only),
+ *                          plus observationAccess: whether THIS connection
+ *                          may change the settings below
  *   setDiscoveryConfig   → saves Office's own discovery settings, then
  *                          re-broadcasts the roster. Privileged only: it
  *                          decides which local directories Office reads.
@@ -28,9 +30,17 @@ type Send = (message: Record<string, unknown>) => void;
 /** How many recent calls a snapshot carries. */
 export const CALL_LOG_SNAPSHOT_LIMIT = 200;
 
-/** Roster + recent call log for one client. The call log is an empty list
- *  (not an error) when storage is unavailable — the office still renders. */
-export function sendObservationSnapshot(send: Send): void {
+/** Shown when an untokened page tries to change a setting. Standalone's
+ *  token changes on every start, so an old tab is the usual cause. */
+const NOT_AUTHORIZED =
+  '此頁面沒有修改權限：請改開 Office 視窗中顯示的最新網址（含 ?token=…）。Office 每次重新啟動後，舊分頁都會失效。';
+
+/** Roster + recent call log for one client, and whether that client may
+ *  change discovery settings — so the form can say so up front instead of
+ *  silently rejecting every click. The call log is an empty list (not an
+ *  error) when storage is unavailable — the office still renders. */
+export function sendObservationSnapshot(send: Send, canEdit: boolean): void {
+  send({ type: 'observationAccess', canEdit });
   send(rosterMessage(scanNativeAgentRosterSnapshot()));
   const storage = getOfficeStorage();
   if (!storage) {
@@ -56,7 +66,7 @@ export function handleSetDiscoveryConfig(
     send({
       type: 'discoveryConfigResult',
       ok: false,
-      error: 'not authorized: changing discovery sources requires the server token',
+      error: NOT_AUTHORIZED,
     });
     return;
   }
@@ -84,7 +94,7 @@ export function handleSetGithubToken(
     send({
       type: 'discoveryConfigResult',
       ok: false,
-      error: 'not authorized: setting the GitHub token requires the server token',
+      error: NOT_AUTHORIZED,
     });
     return;
   }
