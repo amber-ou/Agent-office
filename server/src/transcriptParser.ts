@@ -84,6 +84,60 @@ export function setTeamSwitchCallback(
   teamSwitchCallback = cb;
 }
 
+/**
+ * A `Task` tool call naming a `subagent_type` — the one reliably observable
+ * "CC delegates to a named subagent" event (see docs/office-characters.md
+ * and the call-log spec: a separately-launched `claude --agent X` session
+ * carries no field tying it back to an agent name, so only this
+ * within-conversation delegation is captured for the call log).
+ *
+ * `parentSessionId` is the real Claude session id of the conversation that
+ * made the call — the call log's identity, never the process-local runtime
+ * `agentId`. `toolUseId` is the stable JSONL tool_use id, paired with the
+ * matching tool_result at `taskCallEndedCallback`.
+ */
+export interface TaskCallStartInfo {
+  agentId: number;
+  parentSessionId: string;
+  toolUseId: string;
+  subagentType: string;
+  prompt?: string;
+  description?: string;
+}
+let taskCallStartedCallback: ((info: TaskCallStartInfo) => void) | null = null;
+export function setTaskCallStartedCallback(cb: ((info: TaskCallStartInfo) => void) | null): void {
+  taskCallStartedCallback = cb;
+}
+
+export interface TaskCallEndInfo {
+  agentId: number;
+  parentSessionId: string;
+  toolUseId: string;
+  isError: boolean;
+}
+let taskCallEndedCallback: ((info: TaskCallEndInfo) => void) | null = null;
+export function setTaskCallEndedCallback(cb: ((info: TaskCallEndInfo) => void) | null): void {
+  taskCallEndedCallback = cb;
+}
+
+/**
+ * The spawn's tool_result turned out to be an async launch acknowledgment
+ * ("Async agent launched successfully...", see `isAsyncAgentResult`), not a
+ * real completion — this call's actual end (if any) is not observed by this
+ * version. Fired instead of `taskCallEndedCallback`, never both.
+ */
+export interface TaskCallBackgroundInfo {
+  agentId: number;
+  parentSessionId: string;
+  toolUseId: string;
+}
+let taskCallBackgroundCallback: ((info: TaskCallBackgroundInfo) => void) | null = null;
+export function setTaskCallBackgroundCallback(
+  cb: ((info: TaskCallBackgroundInfo) => void) | null,
+): void {
+  taskCallBackgroundCallback = cb;
+}
+
 /** Format a tool status line. Delegates to the active HookProvider's formatToolStatus.
  *  Invariant: a provider is registered before any transcript lines are parsed. */
 export function formatToolStatus(toolName: string, input: Record<string, unknown>): string {
@@ -166,6 +220,35 @@ export function processTranscriptLine(
             agent.activeToolNames.set(block.id, toolName);
             if (!exemptTools().has(toolName)) {
               hasNonExemptTool = true;
+            }
+            // Call-log capture: a foreground subagent delegation names its
+            // agent identity via `subagent_type` on the spawn tool's input.
+            // The tool is called `Task` on older CLI builds and `Agent` on
+            // current ones (CLAUDE.md's provider table) — both are accepted,
+            // since which one a given install emits is a CLI-version fact
+            // this code cannot assume. A `name` field alongside
+            // `subagent_type` marks a teammate-to-be (see `isTeammateSpawn`
+            // just below) — a persistent character tracked by the existing
+            // team mechanism, not a bounded call, so it is excluded here.
+            // `agent.sessionId` is the real Claude session id (the call
+            // log's identity), never the process-local runtime agentId.
+            if (
+              (toolName === 'Task' || toolName === 'Agent') &&
+              typeof block.input?.['subagent_type'] === 'string' &&
+              typeof block.input?.['name'] !== 'string'
+            ) {
+              taskCallStartedCallback?.({
+                agentId,
+                parentSessionId: agent.sessionId,
+                toolUseId: block.id,
+                subagentType: block.input['subagent_type'],
+                ...(typeof block.input['prompt'] === 'string'
+                  ? { prompt: block.input['prompt'] }
+                  : {}),
+                ...(typeof block.input['description'] === 'string'
+                  ? { description: block.input['description'] }
+                  : {}),
+              });
             }
             // Detect tmux vs inline team mode from the team provider's spawn predicate.
             if (
@@ -330,6 +413,20 @@ export function processTranscriptLine(
                 console.log(
                   `[Pixel Agents] Agent ${agentId} background agent launched: ${completedToolId}`,
                 );
+                // This "result" is a launch acknowledgment, not a real
+                // completion — the spawn's actual end is observed (if at
+                // all) via its own shadow-watched transcript, never here.
+                // Recording it as `ended` would be exactly the fabricated
+                // completion time the call log must never produce, so a
+                // call started for this tool_use (i.e. one not excluded as
+                // a teammate-to-be) is instead marked explicitly untracked.
+                if (!agent.teammateSpawnToolIds?.has(completedToolId)) {
+                  taskCallBackgroundCallback?.({
+                    agentId,
+                    parentSessionId: agent.sessionId,
+                    toolUseId: completedToolId,
+                  });
+                }
                 agent.backgroundAgentToolIds.add(completedToolId);
                 // Current harnesses OMIT run_in_background from the tool_use
                 // input, so the spawn's original agentToolStart went out
@@ -358,6 +455,17 @@ export function processTranscriptLine(
               console.log(
                 `[Pixel Agents] JSONL: Agent ${agentId} - tool done: ${block.tool_use_id}`,
               );
+              if (
+                (completedToolName === 'Task' || completedToolName === 'Agent') &&
+                !agent.teammateSpawnToolIds?.has(completedToolId)
+              ) {
+                taskCallEndedCallback?.({
+                  agentId,
+                  parentSessionId: agent.sessionId,
+                  toolUseId: completedToolId,
+                  isError: (block as { is_error?: unknown }).is_error === true,
+                });
+              }
               // If the completed tool spawned a subagent, clear its subagent tools
               if (isSubagentTool(completedToolName)) {
                 agent.activeSubagentToolIds.delete(completedToolId);

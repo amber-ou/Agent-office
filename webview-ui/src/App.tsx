@@ -13,7 +13,8 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
-import { OfficePanel } from './control/OfficePanel.js';
+import { AgentDetailPanel } from './control/AgentDetailPanel.js';
+import { AgentPanel } from './control/AgentPanel.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -69,6 +70,7 @@ function App() {
 
   const {
     agents,
+    officeAgents,
     selectedAgent,
     agentTools,
     agentStatuses,
@@ -105,7 +107,8 @@ function App() {
 
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isOfficeOpen, setIsOfficeOpen] = useState(false);
+  const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
+  const [selectedAgentKey, setSelectedAgentKey] = useState<string | null>(null);
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -237,6 +240,16 @@ function App() {
   const handleClick = useCallback((agentId: number) => {
     // If clicked agent is a sub-agent, focus the parent's terminal instead
     const os = getOfficeState();
+    const officeAgentId = os.characters.get(agentId)?.officeAgentId;
+    if (officeAgentId) {
+      // A roster-sourced resident character (see officeCharacters.ts): open
+      // this one agent's detail — the same view a row in the Agent panel
+      // opens (AgentDetailPanel), fed by the same computeAgentSummaries.
+      // There is no Office Agent configuration to open any more — CC's own
+      // agent file is the sole source.
+      setSelectedAgentKey(officeAgentId);
+      return;
+    }
     const meta = os.subagentMeta.get(agentId);
     const focusId = meta ? meta.parentAgentId : agentId;
     transport.send({ type: 'focusAgent', id: focusId });
@@ -429,7 +442,7 @@ function App() {
 
           <ToolOverlay
             officeState={officeState}
-            agents={agents}
+            agents={[...agents, ...officeAgents]}
             agentTools={agentTools}
             subagentTools={subagentTools}
             subagentCharacters={subagentCharacters}
@@ -519,12 +532,17 @@ function App() {
         onToggleEditMode={editor.handleToggleEditMode}
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
-        isOfficeOpen={isOfficeOpen}
-        onToggleOffice={() => setIsOfficeOpen((v) => !v)}
+        isAgentPanelOpen={isAgentPanelOpen}
+        onToggleAgentPanel={() => setIsAgentPanelOpen((v) => !v)}
         workspaceFolders={workspaceFolders}
       />
 
-      <OfficePanel isOpen={isOfficeOpen} onClose={() => setIsOfficeOpen(false)} />
+      <AgentPanel
+        isOpen={isAgentPanelOpen}
+        onClose={() => setIsAgentPanelOpen(false)}
+        onSelectAgent={(key) => setSelectedAgentKey(key)}
+      />
+      <AgentDetailPanel agentKey={selectedAgentKey} onClose={() => setSelectedAgentKey(null)} />
 
       <VersionIndicator
         currentVersion={extensionVersion}

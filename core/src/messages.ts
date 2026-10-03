@@ -43,7 +43,10 @@ export type ServerMessage =
   | OfficeError
   | AgentDetail
   | ProjectDetail
-  | OutputContent;
+  | OutputContent
+  | NativeAgentRoster
+  | AgentCallLogSnapshot
+  | AgentCallUpdated;
 
 export type ClientMessage =
   | WebviewReady
@@ -97,7 +100,8 @@ export type ClientMessage =
   | CancelTaskRun
   | RequestOutputContent
   | AcceptTask
-  | RequestTaskChanges;
+  | RequestTaskChanges
+  | RequestCallLog;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -108,6 +112,7 @@ export interface ProviderCapabilities {
 export interface AgentCreated {
   type: 'agentCreated';
   id: number;
+  sessionId?: string;
   folderName?: string;
   isExternal?: boolean;
   palette?: number;
@@ -133,6 +138,7 @@ export interface ExistingAgents {
 }
 
 export interface AgentSeatMeta {
+  sessionId?: string;
   palette?: number;
   hueShift?: number;
   seatId?: string;
@@ -352,12 +358,26 @@ export interface AgentDiagnostics {
 
 export interface OfficeState {
   type: 'officeState';
+  sessions?: OfficeSession[];
   storage: OfficeStorageStatus;
   projects: OfficeProject[];
   agents: OfficeAgent[];
   memberships: OfficeMembership[];
   tasks: OfficeTask[];
   activeProjectId?: string;
+}
+
+export interface OfficeSession {
+  id: string;
+  agentId: string;
+  projectId: string;
+  taskId?: string;
+  provider: string;
+  status: string;
+  startedAt: string;
+  endedAt?: string;
+  error?: string;
+  providerSessionId?: string;
 }
 
 export interface OfficeStorageStatus {
@@ -491,19 +511,6 @@ export interface OfficeProjectKnowledge {
   updatedAt: string;
 }
 
-export interface OfficeSession {
-  id: string;
-  agentId: string;
-  projectId: string;
-  taskId?: string;
-  provider: string;
-  status: string;
-  startedAt: string;
-  endedAt?: string;
-  error?: string;
-  providerSessionId?: string;
-}
-
 export interface OfficeOutput {
   id: string;
   projectId: string;
@@ -531,6 +538,57 @@ export interface OutputContent {
   title?: string;
   readable: boolean;
   content?: string;
+}
+
+export interface NativeAgentRoster {
+  type: 'nativeAgentRoster';
+  agents: NativeAgentRosterEntry[];
+  root: string;
+}
+
+export interface NativeAgentRosterEntry {
+  name: string;
+  description: string;
+  filePath: string;
+  ambiguous: boolean;
+}
+
+export interface AgentCallLogSnapshot {
+  type: 'agentCallLogSnapshot';
+  calls: AgentCallLogEntry[];
+}
+
+export interface AgentCallLogEntry {
+  id: string;
+  agentName: string;
+  agentFilePath?: string;
+  recognized: boolean;
+  parentSessionId: string;
+  toolUseId: string;
+  taskText?: string;
+  taskDescription?: string;
+  status: AgentCallStatus;
+  startedAt?: string;
+  startUnknown: boolean;
+  endedAt?: string;
+  usage?: AgentCallUsage;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AgentCallStatus =
+  'running' | 'waiting_response' | 'ended' | 'failed' | 'unknown' | 'background_not_tracked';
+
+export interface AgentCallUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+export interface AgentCallUpdated {
+  type: 'agentCallUpdated';
+  call: AgentCallLogEntry;
 }
 
 export interface WebviewReady {
@@ -862,4 +920,8 @@ export interface RequestTaskChanges {
   type: 'requestTaskChanges';
   taskId: string;
   feedback: string;
+}
+
+export interface RequestCallLog {
+  type: 'requestCallLog';
 }

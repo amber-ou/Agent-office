@@ -12,9 +12,10 @@ interface BottomToolbarProps {
   onToggleEditMode: () => void;
   isSettingsOpen: boolean;
   onToggleSettings: () => void;
-  /** Agent Office management surface: projects, agents, memberships, tasks. */
-  isOfficeOpen: boolean;
-  onToggleOffice: () => void;
+  /** Read-only CC activity dashboard: every native agent's status plus its
+   *  observed call history. */
+  isAgentPanelOpen: boolean;
+  onToggleAgentPanel: () => void;
   workspaceFolders: WorkspaceFolder[];
 }
 
@@ -24,8 +25,8 @@ export function BottomToolbar({
   onToggleEditMode,
   isSettingsOpen,
   onToggleSettings,
-  isOfficeOpen,
-  onToggleOffice,
+  isAgentPanelOpen,
+  onToggleAgentPanel,
   workspaceFolders,
 }: BottomToolbarProps) {
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
@@ -133,11 +134,11 @@ export function BottomToolbar({
         Layout
       </Button>
       <Button
-        variant={isOfficeOpen ? 'active' : 'default'}
-        onClick={onToggleOffice}
-        title="Projects, agents and tasks"
+        variant={isAgentPanelOpen ? 'active' : 'default'}
+        onClick={onToggleAgentPanel}
+        title="Claude Code agent status and call history (read-only)"
       >
-        Office
+        Agent
       </Button>
       <Button
         variant={isSettingsOpen ? 'active' : 'default'}
