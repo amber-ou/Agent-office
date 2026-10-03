@@ -19,6 +19,7 @@ Two series live here, and they are not the same numbering.
 | [006](006-sqlite-local-persistence.md)              | SQLite is the canonical local store                                             |
 | [007](007-agent-file-storage.md)                    | Agent-owned configuration lives in per-agent files, keyed by agent id           |
 | [008](008-run-sandbox.md)                           | Claude Code runs inside a bubblewrap namespace; the control plane is privileged |
+| [009](009-observation-only.md)                      | Agent Office is observation-only (supersedes 003, 007, 008)                     |
 
 ## Format
 

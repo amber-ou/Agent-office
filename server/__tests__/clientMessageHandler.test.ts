@@ -10,7 +10,7 @@ import {
   handleClientMessage,
 } from '../src/clientMessageHandler.js';
 import { getHooksEnabled, readConfig, setHooksEnabled } from '../src/configPersistence.js';
-import { closeOfficeStorage, setOfficeDataRoot } from '../src/control/officeStorage.js';
+import { closeOfficeStorage, setOfficeDataRoot } from '../src/control/observationStorage.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import { CLAUDE_HOOK_EVENTS } from '../src/providers/hook/claude/constants.js';
 import type { AgentState } from '../src/types.js';

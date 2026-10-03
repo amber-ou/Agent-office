@@ -8,12 +8,16 @@
  * matter is plain YAML-ish text — bare or quoted scalars, and `tools` as
  * either a comma-separated line or a YAML block list — so it needs its own,
  * separate, permissive parser. Nothing here writes; Office never edits a
- * native CC agent file, only reads it (see `linkNativeAgent.ts`).
+ * native CC agent or skill file, only reads it.
  */
 
-import { hasConflictMarkers } from './ccBridge.js';
-
 const FENCE = '---';
+
+/** An unresolved git merge in the file: a half-merged definition is not one
+ *  Claude Code could run either, so it is reported rather than parsed. */
+export function hasConflictMarkers(text: string): boolean {
+  return /^(<{7}|={7}|>{7})(\s|$)/m.test(text);
+}
 
 export interface NativeAgentFields {
   name: string;
@@ -41,10 +45,22 @@ export type NativeAgentParseResult = { ok: true; agent: ParsedNativeAgent } | Na
  *
  * Refuses (rather than guesses at) two situations: no front matter fence at
  * all — a file that is not a subagent definition, whatever else it might be —
- * and an unresolved git conflict marker, the same rule the Office-owned
- * bridge files use (see `ccBridge.ts`'s `hasConflictMarkers`).
+ * and an unresolved git conflict marker.
  */
 export function parseNativeAgentFile(text: string): NativeAgentParseResult {
+  return parseDefinition(text, undefined);
+}
+
+/**
+ * Parse a skill's `SKILL.md`. Same front matter dialect as an agent file;
+ * the one difference is that a skill without a `name` field falls back to
+ * its directory name, which is how Claude Code itself names it.
+ */
+export function parseSkillFile(text: string, directoryName: string): NativeAgentParseResult {
+  return parseDefinition(text, directoryName);
+}
+
+function parseDefinition(text: string, fallbackName: string | undefined): NativeAgentParseResult {
   if (hasConflictMarkers(text)) {
     return { ok: false, reason: 'unresolved git merge conflict markers' };
   }
@@ -60,7 +76,7 @@ export function parseNativeAgentFile(text: string): NativeAgentParseResult {
   const body = normalized.slice(end + 1 + FENCE.length).replace(/^\n+/, '');
 
   const raw = parseFlatYamlish(header);
-  const name = firstString(raw['name']).trim();
+  const name = firstString(raw['name']).trim() || (fallbackName ?? '').trim();
   if (!name) {
     return { ok: false, reason: 'front matter has no `name` field — Claude Code requires one' };
   }

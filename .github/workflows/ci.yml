@@ -94,12 +94,6 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-      - name: Domain Tests
-        id: domain_test
-        if: always() && steps.install_dependencies.outcome == 'success'
-        run: npm run test:domain
-        continue-on-error: true
-
       - name: Storage Tests
         id: storage_test
         if: always() && steps.install_dependencies.outcome == 'success'
@@ -182,7 +176,6 @@ jobs:
           INSTALL_DEPENDENCIES: ${{ steps.install_dependencies.outcome }}
           TYPE_CHECK: ${{ steps.type_check.outcome }}
           LINT: ${{ steps.lint.outcome }}
-          DOMAIN_TEST: ${{ steps.domain_test.outcome }}
           STORAGE_TEST: ${{ steps.storage_test.outcome }}
           WEBVIEW_TEST: ${{ steps.webview_test.outcome }}
           FORMAT_CHECK: ${{ steps.format_check.outcome }}
@@ -208,7 +201,6 @@ jobs:
             echo "| Install dependencies | $(status "$INSTALL_DEPENDENCIES") |"
             echo "| **Type check** | $(status "$TYPE_CHECK") |"
             echo "| **Lint** | $(status "$LINT") |"
-            echo "| **Domain tests** | $(status "$DOMAIN_TEST") |"
             echo "| **Storage tests** | $(status "$STORAGE_TEST") |"
             echo "| **Webview tests** | $(status "$WEBVIEW_TEST") |"
             echo "| **Format check** | $(status "$FORMAT_CHECK") |"
@@ -229,7 +221,6 @@ jobs:
           INSTALL_DEPENDENCIES: ${{ steps.install_dependencies.outcome }}
           TYPE_CHECK: ${{ steps.type_check.outcome }}
           LINT: ${{ steps.lint.outcome }}
-          DOMAIN_TEST: ${{ steps.domain_test.outcome }}
           STORAGE_TEST: ${{ steps.storage_test.outcome }}
           WEBVIEW_TEST: ${{ steps.webview_test.outcome }}
           FORMAT_CHECK: ${{ steps.format_check.outcome }}
@@ -240,7 +231,7 @@ jobs:
           failed=0
           for step in CHECKOUT SETUP_NODE INSTALL_DEPENDENCIES \
                       TYPE_CHECK LINT \
-                      DOMAIN_TEST STORAGE_TEST \
+                      STORAGE_TEST \
                       WEBVIEW_TEST FORMAT_CHECK BUILD NPM_PACKAGE SERVER_TEST; do
             val=$(printenv "$step" 2>/dev/null || echo "skipped")
             if [ "$val" != "success" ]; then

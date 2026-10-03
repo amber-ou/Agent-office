@@ -118,16 +118,11 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
-        # Agent Office control plane
-        - $ref: '#/components/schemas/OfficeState'
-        - $ref: '#/components/schemas/OfficeError'
-        - $ref: '#/components/schemas/AgentDetail'
-        - $ref: '#/components/schemas/ProjectDetail'
-        - $ref: '#/components/schemas/OutputContent'
-        # CC activity dashboard: native-agent roster + observed call log
+        # Agent Office observation: discovered roster + observed call log
         - $ref: '#/components/schemas/NativeAgentRoster'
         - $ref: '#/components/schemas/AgentCallLogSnapshot'
         - $ref: '#/components/schemas/AgentCallUpdated'
+        - $ref: '#/components/schemas/DiscoveryConfigResult'
       discriminator: type
 
     ClientMessage:
@@ -154,40 +149,9 @@ components:
         - $ref: '#/components/schemas/SaveAreaMappings'
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
-        # Agent Office control plane
-        - $ref: '#/components/schemas/RequestOffice'
-        - $ref: '#/components/schemas/CreateProject'
-        - $ref: '#/components/schemas/SetActiveProject'
-        - $ref: '#/components/schemas/CreateAgent'
-        - $ref: '#/components/schemas/AddAgentToProject'
-        - $ref: '#/components/schemas/RemoveAgentFromProject'
-        - $ref: '#/components/schemas/CreateTask'
-        # Agent configuration
-        - $ref: '#/components/schemas/RequestAgentDetail'
-        - $ref: '#/components/schemas/UpdateAgent'
-        - $ref: '#/components/schemas/CreateSkill'
-        - $ref: '#/components/schemas/UpdateSkill'
-        - $ref: '#/components/schemas/DeleteSkill'
-        - $ref: '#/components/schemas/CreateAgentKnowledge'
-        - $ref: '#/components/schemas/UpdateAgentKnowledge'
-        - $ref: '#/components/schemas/DeleteAgentKnowledge'
-        - $ref: '#/components/schemas/RequestProjectDetail'
-        - $ref: '#/components/schemas/UpdateProject'
-        - $ref: '#/components/schemas/CreateProjectKnowledge'
-        - $ref: '#/components/schemas/UpdateProjectKnowledge'
-        - $ref: '#/components/schemas/DeleteProjectKnowledge'
-        - $ref: '#/components/schemas/UpdateTask'
-        - $ref: '#/components/schemas/AssignTask'
-        - $ref: '#/components/schemas/UnassignTask'
-        - $ref: '#/components/schemas/SetTaskStatus'
-        - $ref: '#/components/schemas/DeleteTask'
-        - $ref: '#/components/schemas/RunTask'
-        - $ref: '#/components/schemas/CancelTaskRun'
-        - $ref: '#/components/schemas/RequestOutputContent'
-        - $ref: '#/components/schemas/AcceptTask'
-        - $ref: '#/components/schemas/RequestTaskChanges'
-        # CC activity dashboard
+        # Agent Office observation
         - $ref: '#/components/schemas/RequestCallLog'
+        - $ref: '#/components/schemas/SetDiscoveryConfig'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1246,991 +1210,16 @@ components:
         frame:
           type: integer
 
-    # ── Agent Office control plane ─────────────────────────────────
-    # Persistent Projects, Agents, memberships and Tasks, backed by SQLite.
-    # The office UI never touches the database; it speaks only these messages.
-
-    OfficeState:
-      description: |
-        Full snapshot of the Agent Office control plane. Re-sent after every
-        mutation — the data set is small and a whole snapshot cannot drift the
-        way a stream of incremental patches can.
-      type: object
-      additionalProperties: false
-      required: [type, storage, projects, agents, memberships, tasks]
-      properties:
-        type:
-          const: officeState
-        sessions:
-          description: Session identities for associating runtime characters with Office agents.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeSession'
-        storage:
-          $ref: '#/components/schemas/OfficeStorageStatus'
-        projects:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeProject'
-        agents:
-          description: Every agent in the office. Agents are global, not owned by a project.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeAgent'
-        memberships:
-          description: Project-agent memberships for the active project only.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeMembership'
-        tasks:
-          description: Tasks of the active project only.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeTask'
-        activeProjectId:
-          type: string
-
-    OfficeError:
-      description: A control-plane operation failed. Reported to the client that asked.
-      type: object
-      additionalProperties: false
-      required: [type, operation, message]
-      properties:
-        type:
-          const: officeError
-        operation:
-          type: string
-        message:
-          type: string
-
-    OfficeStorageStatus:
-      type: object
-      additionalProperties: false
-      required: [ready, schemaVersion]
-      properties:
-        ready:
-          type: boolean
-        schemaVersion:
-          type: integer
-        databasePath:
-          type: string
-        error:
-          type: string
-
-    OfficeProject:
-      type: object
-      additionalProperties: false
-      required: [id, name, description, status, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    OfficeAgent:
-      type: object
-      additionalProperties: false
-      required: [id, name, role, description, provider, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        role:
-          type: string
-        description:
-          type: string
-        systemPrompt:
-          type: string
-        provider:
-          type: string
-        model:
-          type: string
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    OfficeMembership:
-      type: object
-      additionalProperties: false
-      required: [id, projectId, agentId]
-      properties:
-        id:
-          type: string
-        projectId:
-          type: string
-        agentId:
-          type: string
-        seatId:
-          type: string
-
-    OfficeTask:
-      type: object
-      additionalProperties: false
-      required:
-        [id, projectId, title, description, status, priority, dependencies, inputs, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        projectId:
-          type: string
-        title:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-        priority:
-          type: string
-        assignedAgentId:
-          type: string
-        parentTaskId:
-          description: Decomposition parent. NOT an execution dependency.
-          type: string
-        dependencies:
-          description: Task ids this task cannot start before. NOT a hierarchy.
-          type: array
-          items:
-            type: string
-        inputs:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeTaskInput'
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    OfficeTaskInput:
-      description: |
-        One TaskInput, flattened. `kind` selects which of the remaining fields
-        carries the reference; the server rebuilds the domain union from it.
-      type: object
-      additionalProperties: false
-      required: [kind]
-      properties:
-        kind:
-          type: string
-        value:
-          description: kind=text
-          type: string
-        knowledgeId:
-          description: kind=projectKnowledge — project knowledge only, never agent knowledge.
-          type: string
-        outputId:
-          description: kind=output
-          type: string
-        path:
-          description: kind=file
-          type: string
-
-    RequestOffice:
-      description: Ask for the current office snapshot, opening the database if needed.
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          const: requestOffice
-
-    CreateProject:
-      description: Create a Project. Nothing is seeded with it.
-      type: object
-      additionalProperties: false
-      required: [type, name]
-      properties:
-        type:
-          const: createProject
-        name:
-          type: string
-        description:
-          type: string
-
-    SetActiveProject:
-      description: Choose which project the office shows. Omit projectId to clear it.
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          const: setActiveProject
-        projectId:
-          type: string
-
-    CreateAgent:
-      description: |
-        Create a global Agent. Fields mirror AgentDefinition exactly; the office
-        adds none of its own.
-      type: object
-      additionalProperties: false
-      required: [type, name, role, provider]
-      properties:
-        type:
-          const: createAgent
-        name:
-          type: string
-        role:
-          type: string
-        provider:
-          type: string
-        description:
-          type: string
-        systemPrompt:
-          type: string
-        model:
-          type: string
-
-    AddAgentToProject:
-      description: Add an existing global Agent to a Project as a member.
-      type: object
-      additionalProperties: false
-      required: [type, projectId, agentId]
-      properties:
-        type:
-          const: addAgentToProject
-        projectId:
-          type: string
-        agentId:
-          type: string
-
-    RemoveAgentFromProject:
-      description: |
-        Remove a membership. The global Agent, its skills and its knowledge are
-        untouched, as are its memberships of other projects.
-      type: object
-      additionalProperties: false
-      required: [type, projectId, agentId]
-      properties:
-        type:
-          const: removeAgentFromProject
-        projectId:
-          type: string
-        agentId:
-          type: string
-
-    CreateTask:
-      description: Create a Task inside a Project.
-      type: object
-      additionalProperties: false
-      required: [type, projectId, title]
-      properties:
-        type:
-          const: createTask
-        projectId:
-          type: string
-        title:
-          type: string
-        description:
-          type: string
-        assignedAgentId:
-          type: string
-        priority:
-          type: string
-        parentTaskId:
-          type: string
-        dependencies:
-          type: array
-          items:
-            type: string
-        inputs:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeTaskInput'
-
-    # ── Agent configuration ────────────────────────────────────────
-    # Everything an Agent permanently owns: its definition, its instructions,
-    # its Skills and its AgentKnowledge. Project-scoped data never appears here.
-
-    AgentDetail:
-      description: |
-        One agent's full configuration. Sent in reply to requestAgentDetail and
-        after every change to that agent, its skills or its knowledge.
-      type: object
-      additionalProperties: false
-      required: [type, agent, skills, knowledge]
-      properties:
-        type:
-          const: agentDetail
-        fileBacked:
-          description: |
-            True only when this agent's own files own its configuration AND
-            they are readable. False while a migration conflict keeps it on the
-            database, or when its files have gone missing. Editing is refused
-            either way.
-          type: boolean
-        configIssue:
-          description: |
-            What needs a person: a first-migration conflict, or a file-backed
-            agent whose files are missing. Absent when all is well.
-          type: string
-        agent:
-          $ref: '#/components/schemas/OfficeAgent'
-        skills:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeSkill'
-        knowledge:
-          description: Permanent, agent-owned knowledge. Never project knowledge.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeAgentKnowledge'
-
-    OfficeSkill:
-      type: object
-      additionalProperties: false
-      required: [id, agentId, slug, name, description, kind, requiredTools]
-      properties:
-        id:
-          type: string
-        agentId:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        kind:
-          type: string
-        requiredTools:
-          type: array
-          items:
-            type: string
-        content:
-          description: Inline skill body, when the skill's source carries one.
-          type: string
-
-    OfficeAgentKnowledge:
-      type: object
-      additionalProperties: false
-      required: [id, agentId, type, title, tags, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        agentId:
-          type: string
-        type:
-          type: string
-        title:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-        content:
-          description: |
-            The stored text, read through the BlobStore. Omitted when the item
-            points at something this build cannot read inline (a file or url
-            reference), which leaves the reference itself untouched.
-          type: string
-        contentReadable:
-          type: boolean
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    RequestAgentDetail:
-      description: Ask for one agent's configuration. Omit agentId to clear the selection.
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          const: requestAgentDetail
-        agentId:
-          type: string
-
-    UpdateAgent:
-      description: |
-        Edit an agent's own configuration. Only fields present are changed.
-        There is no project field: agents are global.
-      type: object
-      additionalProperties: false
-      required: [type, agentId]
-      properties:
-        type:
-          const: updateAgent
-        agentId:
-          type: string
-        name:
-          type: string
-        role:
-          type: string
-        description:
-          type: string
-        systemPrompt:
-          type: string
-        model:
-          type: string
-
-    CreateSkill:
-      description: Create a Skill owned by one agent. Slugs are unique within that agent.
-      type: object
-      additionalProperties: false
-      required: [type, agentId, slug, name, kind]
-      properties:
-        type:
-          const: createSkill
-        agentId:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        kind:
-          type: string
-        description:
-          type: string
-        content:
-          type: string
-        requiredTools:
-          type: array
-          items:
-            type: string
-
-    UpdateSkill:
-      description: Edit a Skill. The owning agent cannot be changed.
-      type: object
-      additionalProperties: false
-      required: [type, agentId, skillId]
-      properties:
-        type:
-          const: updateSkill
-        agentId:
-          description: The owning agent. Every agent-scoped call carries it.
-          type: string
-        skillId:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        kind:
-          type: string
-        description:
-          type: string
-        content:
-          type: string
-        requiredTools:
-          type: array
-          items:
-            type: string
-
-    DeleteSkill:
-      type: object
-      additionalProperties: false
-      required: [type, agentId, skillId]
-      properties:
-        type:
-          const: deleteSkill
-        agentId:
-          type: string
-        skillId:
-          type: string
-
-    CreateAgentKnowledge:
-      description: |
-        Add permanent knowledge to an agent. This is the ONLY way agent
-        knowledge comes into being — nothing is ingested from project work.
-      type: object
-      additionalProperties: false
-      required: [type, agentId, title, knowledgeType, content]
-      properties:
-        type:
-          const: createAgentKnowledge
-        agentId:
-          type: string
-        title:
-          type: string
-        knowledgeType:
-          type: string
-        content:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-
-    UpdateAgentKnowledge:
-      description: Edit agent knowledge. The owning agent cannot be changed.
-      type: object
-      additionalProperties: false
-      required: [type, agentId, knowledgeId]
-      properties:
-        type:
-          const: updateAgentKnowledge
-        agentId:
-          type: string
-        knowledgeId:
-          type: string
-        title:
-          type: string
-        knowledgeType:
-          type: string
-        content:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-
-    DeleteAgentKnowledge:
-      type: object
-      additionalProperties: false
-      required: [type, agentId, knowledgeId]
-      properties:
-        type:
-          const: deleteAgentKnowledge
-        agentId:
-          type: string
-        knowledgeId:
-          type: string
-
-    # ── Project workspace ──────────────────────────────────────────
-    # The temporary working context of ONE project: its definition, its
-    # members, its ProjectKnowledge and its Tasks. Nothing here touches an
-    # agent's permanent configuration (ADR 005).
-
-    ProjectDetail:
-      description: |
-        One project's whole workspace. Sent in reply to requestProjectDetail and
-        after every change to that project, its knowledge or its tasks.
-      type: object
-      additionalProperties: false
-      required:
-        [type, project, memberships, knowledge, tasks, sessions, outputs, reviewNotes]
-      properties:
-        type:
-          const: projectDetail
-        project:
-          $ref: '#/components/schemas/OfficeProjectDetail'
-        memberships:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeMembership'
-        knowledge:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeProjectKnowledge'
-        tasks:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeTask'
-        sessions:
-          description: Runs in this project, newest first. One per Claude Code execution.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeSession'
-        outputs:
-          description: What this project's tasks produced. Metadata only; content is fetched.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeOutput'
-        reviewNotes:
-          description: |
-            Human review feedback, oldest first. Part of the task's history and
-            never of any agent's knowledge.
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeReviewNote'
-
-    OfficeSession:
-      description: |
-        One concrete execution. NOT the agent: an AgentDefinition is permanent
-        configuration, a session is one run of it (ADR 002).
-      type: object
-      additionalProperties: false
-      required: [id, agentId, projectId, provider, status, startedAt]
-      properties:
-        id:
-          type: string
-        agentId:
-          type: string
-        projectId:
-          type: string
-        taskId:
-          type: string
-        provider:
-          type: string
-        status:
-          type: string
-        startedAt:
-          type: string
-        endedAt:
-          type: string
-        error:
-          type: string
-        providerSessionId:
-          type: string
-
-    OfficeOutput:
-      type: object
-      additionalProperties: false
-      required: [id, projectId, taskId, producedByAgentId, title, type, createdAt]
-      properties:
-        id:
-          type: string
-        projectId:
-          type: string
-        taskId:
-          type: string
-        producedByAgentId:
-          type: string
-        sessionId:
-          type: string
-        title:
-          type: string
-        type:
-          type: string
-        createdAt:
-          type: string
-
-    OfficeReviewNote:
-      type: object
-      additionalProperties: false
-      required: [id, taskId, author, body, createdAt]
-      properties:
-        id:
-          type: string
-        taskId:
-          type: string
-        aboutSessionId:
-          description: The run this feedback was written about.
-          type: string
-        triggeredSessionId:
-          description: The revision run this feedback started.
-          type: string
-        author:
-          type: string
-        body:
-          type: string
-        createdAt:
-          type: string
-
-    AcceptTask:
-      description: |
-        Accept a reviewed result: the task becomes done. No runtime is invoked
-        and no output or run history is touched.
-      type: object
-      additionalProperties: false
-      required: [type, taskId]
-      properties:
-        type:
-          const: acceptTask
-        taskId:
-          type: string
-
-    RequestTaskChanges:
-      description: |
-        Send a reviewed task back for changes with human feedback, continuing
-        the same Claude session. The feedback is required and non-empty.
-      type: object
-      additionalProperties: false
-      required: [type, taskId, feedback]
-      properties:
-        type:
-          const: requestTaskChanges
-        taskId:
-          type: string
-        feedback:
-          type: string
-
-    OutputContent:
-      description: The text of one output, fetched on demand.
-      type: object
-      additionalProperties: false
-      required: [type, outputId, readable]
-      properties:
-        type:
-          const: outputContent
-        outputId:
-          type: string
-        title:
-          type: string
-        readable:
-          type: boolean
-        content:
-          type: string
-
-    RunTask:
-      description: |
-        Dispatch one task to Claude Code. Refused unless the task is in the
-        active project, has a member agent assigned, its dependencies are done
-        and its status allows starting. One run at a time.
-      type: object
-      additionalProperties: false
-      required: [type, taskId]
-      properties:
-        type:
-          const: runTask
-        taskId:
-          type: string
-
-    CancelTaskRun:
-      description: Stop the live run. The run then completes as a failure.
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          const: cancelTaskRun
-
-    RequestOutputContent:
-      type: object
-      additionalProperties: false
-      required: [type, outputId]
-      properties:
-        type:
-          const: requestOutputContent
-        outputId:
-          type: string
-
-    OfficeProjectDetail:
-      description: A project with the settings the office can edit.
-      type: object
-      additionalProperties: false
-      required: [id, name, description, status, workspacePaths, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-        workspacePaths:
-          type: array
-          items:
-            type: string
-        defaultProvider:
-          type: string
-        defaultModel:
-          type: string
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    OfficeProjectKnowledge:
-      description: |
-        Knowledge owned by one project. Never reachable from an agent's library:
-        the two are separate entities with separate repositories.
-      type: object
-      additionalProperties: false
-      required: [id, projectId, type, title, tags, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        projectId:
-          type: string
-        type:
-          type: string
-        title:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-        content:
-          description: Resolved blob content. Absent when the reference cannot be read.
-          type: string
-        contentReadable:
-          type: boolean
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-
-    RequestProjectDetail:
-      description: Open a project workspace. Omit projectId to close it.
-      type: object
-      additionalProperties: false
-      required: [type]
-      properties:
-        type:
-          const: requestProjectDetail
-        projectId:
-          type: string
-
-    UpdateProject:
-      description: Edit a project's own definition and settings.
-      type: object
-      additionalProperties: false
-      required: [type, projectId]
-      properties:
-        type:
-          const: updateProject
-        projectId:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-        workspacePaths:
-          type: array
-          items:
-            type: string
-        defaultProvider:
-          type: string
-        defaultModel:
-          type: string
-
-    CreateProjectKnowledge:
-      description: |
-        Add knowledge to a project. The only way project knowledge is created —
-        nothing is ingested automatically, and none of it ever reaches an agent's
-        own knowledge.
-      type: object
-      additionalProperties: false
-      required: [type, projectId, title, knowledgeType, content]
-      properties:
-        type:
-          const: createProjectKnowledge
-        projectId:
-          type: string
-        title:
-          type: string
-        knowledgeType:
-          type: string
-        content:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-
-    UpdateProjectKnowledge:
-      description: Edit project knowledge. The owning project cannot be changed.
-      type: object
-      additionalProperties: false
-      required: [type, knowledgeId]
-      properties:
-        type:
-          const: updateProjectKnowledge
-        knowledgeId:
-          type: string
-        title:
-          type: string
-        knowledgeType:
-          type: string
-        content:
-          type: string
-        tags:
-          type: array
-          items:
-            type: string
-
-    DeleteProjectKnowledge:
-      type: object
-      additionalProperties: false
-      required: [type, knowledgeId]
-      properties:
-        type:
-          const: deleteProjectKnowledge
-        knowledgeId:
-          type: string
-
-    UpdateTask:
-      description: |
-        Edit a task's own fields. Status and assignment have their own messages
-        because the domain guards them with transition rules.
-      type: object
-      additionalProperties: false
-      required: [type, taskId]
-      properties:
-        type:
-          const: updateTask
-        taskId:
-          type: string
-        title:
-          type: string
-        description:
-          type: string
-        priority:
-          type: string
-        parentTaskId:
-          type: string
-        clearParentTask:
-          description: Detach this task from its decomposition parent.
-          type: boolean
-        dependencies:
-          type: array
-          items:
-            type: string
-        inputs:
-          type: array
-          items:
-            $ref: '#/components/schemas/OfficeTaskInput'
-
-    AssignTask:
-      description: Assign a task to an agent that is a member of its project.
-      type: object
-      additionalProperties: false
-      required: [type, taskId, agentId]
-      properties:
-        type:
-          const: assignTask
-        taskId:
-          type: string
-        agentId:
-          type: string
-
-    UnassignTask:
-      type: object
-      additionalProperties: false
-      required: [type, taskId]
-      properties:
-        type:
-          const: unassignTask
-        taskId:
-          type: string
-
-    SetTaskStatus:
-      description: Move a task through the status machine the domain defines.
-      type: object
-      additionalProperties: false
-      required: [type, taskId, status]
-      properties:
-        type:
-          const: setTaskStatus
-        taskId:
-          type: string
-        status:
-          type: string
-
-    DeleteTask:
-      type: object
-      additionalProperties: false
-      required: [type, taskId]
-      properties:
-        type:
-          const: deleteTask
-        taskId:
-          type: string
-
-    # ── CC activity dashboard ────────────────────────────────────────
-    # Office observes Claude Code's own agent roster and activity; it never
-    # creates a Project/Task/AgentDefinition to hold this. See
+    # ── Agent Office observation ─────────────────────────────────────
+    # Office observes Claude Code's own agents, skills and activity; it never
+    # starts, dispatches or edits an agent. See docs/observation.md,
     # storage/src/callLog.ts and storage/src/files/nativeAgentDiscovery.ts.
 
     NativeAgentRosterEntry:
-      description: One CC-native subagent file found under ~/.claude/agents.
+      description: One Claude Code agent or skill definition found by discovery.
       type: object
       additionalProperties: false
-      required: [name, description, filePath, ambiguous]
+      required: [name, description, filePath, ambiguous, kind, scope]
       properties:
         name:
           type: string
@@ -2240,21 +1229,105 @@ components:
           type: string
         ambiguous:
           description: |
-            True when another file under the same root declares the same
-            name, so a subagent_type match to this name cannot be resolved
-            to this one file with confidence.
+            True when another definition of the same kind declares the same
+            name in the same source directory, so observed activity under
+            that name cannot be attributed to this one file.
           type: boolean
+        kind:
+          $ref: '#/components/schemas/DefinitionKind'
+        scope:
+          $ref: '#/components/schemas/DiscoveryScope'
+        projectRoot:
+          description: For project scope, the configured project root.
+          type: string
+
+    DefinitionKind:
+      type: string
+      enum: [agent, skill]
+
+    DiscoveryScope:
+      type: string
+      enum: [user, project]
+
+    AgentCallKind:
+      description: How the activity was invoked (not a status).
+      type: string
+      enum: [subagent, background, teammate, skill]
+
+    EvidenceSource:
+      description: What the current status rests on.
+      type: string
+      enum:
+        [
+          transcript,
+          hook,
+          queue_operation,
+          team_config,
+          session_end,
+          turn_end,
+          run_record,
+          status_report,
+          restart,
+        ]
+
+    DiscoveryConfig:
+      description: Office's own discovery settings (~/.agent-office/discovery.json).
+      type: object
+      additionalProperties: false
+      required: [includeUserAgents, includeUserSkills, projectRoots, skillInclude]
+      properties:
+        includeUserAgents:
+          type: boolean
+        includeUserSkills:
+          type: boolean
+        projectRoots:
+          description: Absolute local project roots whose .claude/agents and .claude/skills are scanned.
+          type: array
+          items:
+            type: string
+        skillInclude:
+          description: Skill names (exact, or with * wildcards) shown as agents.
+          type: array
+          items:
+            type: string
+
+    DiscoverySource:
+      type: object
+      additionalProperties: false
+      required: [kind, scope, root, exists]
+      properties:
+        kind:
+          $ref: '#/components/schemas/DefinitionKind'
+        scope:
+          $ref: '#/components/schemas/DiscoveryScope'
+        root:
+          type: string
+        projectRoot:
+          type: string
+        exists:
+          description: False when the directory is not there. Office never creates it.
+          type: boolean
+
+    DiscoveryProblem:
+      type: object
+      additionalProperties: false
+      required: [filePath, reason]
+      properties:
+        filePath:
+          type: string
+        reason:
+          type: string
 
     NativeAgentRoster:
       description: |
-        Snapshot of every CC-native subagent file under ~/.claude/agents,
-        read fresh. Drives the office's persistent, idle-capable characters
-        — one per roster entry, independent of any Office
-        Project/AgentDefinition. Sent on webviewReady and again whenever the
-        roster changes on disk.
+        Discovery snapshot, read fresh from Claude Code's own definition
+        files. `agents` drives the office's persistent characters (every
+        agent, plus the skills the config includes); `candidates` are skills
+        found but not shown. Sent on webviewReady, on requestCallLog, and
+        whenever a source changes on disk.
       type: object
       additionalProperties: false
-      required: [type, agents, root]
+      required: [type, agents, candidates, sources, problems, config, root]
       properties:
         type:
           const: nativeAgentRoster
@@ -2262,20 +1335,26 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/NativeAgentRosterEntry'
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/NativeAgentRosterEntry'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverySource'
+        problems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryProblem'
+        config:
+          $ref: '#/components/schemas/DiscoveryConfig'
         root:
-          description: |
-            The directory actually scanned (Claude Code discovery paths
-            override in tests, ~/.claude/agents otherwise). Shown to the
-            person only when the roster is empty, so "no agents found" names
-            where Office looked rather than leaving them to guess.
+          description: The user-level agents directory, named when nothing was found.
           type: string
 
     AgentCallUsage:
-      description: |
-        Token usage attributed to one call. Present only when it could be
-        attributed to this call alone with no ambiguity (see
-        AgentCallLogEntry.recognized and the call-log capture in
-        transcriptParser.ts).
+      description: Token usage attributed to one call, only when unambiguous.
       type: object
       additionalProperties: false
       required: [inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens]
@@ -2291,22 +1370,26 @@ components:
 
     AgentCallStatus:
       description: |
-        running: the call is in progress. waiting_response: reserved for a
-        future call type that can independently pause for input — no call
-        path in this version reaches it. ended / failed: a confirmed
-        terminal outcome. unknown: was open when the server that was
-        tracking it stopped, and no confirmed end ever arrived — never
-        promoted to ended/failed on a guess. background_not_tracked: the
-        spawn turned out to be an async/background launch (its tool_result
-        was a launch acknowledgment, not a real result) — this version does
-        not observe a background spawn's actual completion, so this is set
-        once and never promoted to ended/failed on a guess either.
+        running / waiting_response: open, with evidence. ended / failed: a
+        confirmed end (see evidenceSource for what confirmed it — ended is
+        not "succeeded"). unknown: no reliable signal (restart, turn or
+        session ended without a completion signal). background_running: an
+        async launch was acknowledged; its completion is not observed yet.
+        background_not_tracked: legacy rows from the previous version.
       type: string
       enum:
-        [running, waiting_response, ended, failed, unknown, background_not_tracked]
+        [
+          running,
+          waiting_response,
+          ended,
+          failed,
+          unknown,
+          background_running,
+          background_not_tracked,
+        ]
 
     AgentCallLogEntry:
-      description: One observed call to a CC subagent (the Task tool's subagent_type).
+      description: One observed agent activity (delegation, background spawn, teammate, or skill).
       type: object
       additionalProperties: false
       required:
@@ -2314,6 +1397,7 @@ components:
           id,
           agentName,
           recognized,
+          kind,
           parentSessionId,
           toolUseId,
           status,
@@ -2325,31 +1409,49 @@ components:
         id:
           type: string
         agentName:
-          description: The Task tool's subagent_type input value.
+          description: The observed name (subagent_type, or the skill name).
           type: string
         agentFilePath:
-          description: Set only once agentName matched exactly one roster file.
+          description: Set only once agentName matched exactly one discovered definition.
           type: string
         recognized:
           type: boolean
+        sourceKind:
+          $ref: '#/components/schemas/DefinitionKind'
+        kind:
+          $ref: '#/components/schemas/AgentCallKind'
         parentSessionId:
-          description: The Claude session id of the conversation that made the call.
+          description: The Claude session id the activity was observed in.
           type: string
         toolUseId:
-          description: Stable JSONL tool_use id of the Task tool call.
+          description: Stable transcript id of the invocation.
+          type: string
+        teammateName:
+          type: string
+        runId:
+          description: The agent's own run id, once a run record was linked.
+          type: string
+        activitySummary:
+          description: Short one-line summary. The full prompt is never stored.
           type: string
         taskText:
-          description: The Task tool's prompt input.
+          description: Legacy rows only (full prompt stored by an earlier version).
           type: string
         taskDescription:
-          description: The Task tool's short description input.
+          description: Legacy rows only.
           type: string
         status:
           $ref: '#/components/schemas/AgentCallStatus'
+        phase:
+          type: string
+        evidenceSource:
+          $ref: '#/components/schemas/EvidenceSource'
         startedAt:
           type: string
         startUnknown:
           type: boolean
+        lastSeenAt:
+          type: string
         endedAt:
           type: string
         usage:
@@ -2360,9 +1462,7 @@ components:
           type: string
 
     AgentCallLogSnapshot:
-      description: |
-        The most recent observed calls, newest first. Sent on webviewReady
-        and in reply to requestCallLog.
+      description: The most recent observed calls, newest first.
       type: object
       additionalProperties: false
       required: [type, calls]
@@ -2375,10 +1475,7 @@ components:
             $ref: '#/components/schemas/AgentCallLogEntry'
 
     AgentCallUpdated:
-      description: |
-        One call was created or changed (status, usage, or end). Incremental
-        push so a client does not need to re-request the whole snapshot on
-        every event.
+      description: One call was created or changed.
       type: object
       additionalProperties: false
       required: [type, call]
@@ -2388,11 +1485,39 @@ components:
         call:
           $ref: '#/components/schemas/AgentCallLogEntry'
 
+    DiscoveryConfigResult:
+      description: Reply to setDiscoveryConfig.
+      type: object
+      additionalProperties: false
+      required: [type, ok]
+      properties:
+        type:
+          const: discoveryConfigResult
+        ok:
+          type: boolean
+        config:
+          $ref: '#/components/schemas/DiscoveryConfig'
+        error:
+          type: string
+
     RequestCallLog:
-      description: Ask for the current native-agent roster and recent call log.
+      description: Ask for the current discovered roster and recent call log.
       type: object
       additionalProperties: false
       required: [type]
       properties:
         type:
           const: requestCallLog
+
+    SetDiscoveryConfig:
+      description: |
+        Replace Office's discovery settings. Privileged (server token) only.
+        Changes only what Office reads; never creates or edits an agent.
+      type: object
+      additionalProperties: false
+      required: [type, config]
+      properties:
+        type:
+          const: setDiscoveryConfig
+        config:
+          $ref: '#/components/schemas/DiscoveryConfig'

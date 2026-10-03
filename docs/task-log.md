@@ -1,3 +1,5 @@
+> **已被取代**：本文件描述 `e2100f2` 的觀測看板。現行模型（純觀測、自動探索、證據來源、去重、資料最小化）見 [`observation.md`](observation.md) 與 [ADR 009](adr/009-observation-only.md)。
+
 # CC 活動看板：任務紀錄與常駐人物
 
 取代 Office 自建 Agent／Project／Task／派工的近期目標：**Claude Code（CC）建立與維護

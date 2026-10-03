@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { WS_CLOSE_FORBIDDEN_ORIGIN, WS_CLOSE_UNAUTHORIZED } from '../src/constants.js';
-import { closeOfficeStorage } from '../src/control/officeStorage.js';
+import { closeOfficeStorage } from '../src/control/observationStorage.js';
 
 // Isolated temp HOME: the server writes ~/.pixel-agents/{server.json,servers/}
 // and the consent assertions below read ~/.pixel-agents/config.json.

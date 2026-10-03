@@ -1,8 +1,8 @@
 # Agent Office
 
-長期使用的多專案 AI Agent 管理工作區。
+Claude Code 多 agent 的像素辦公室：**純觀測介面**。
 
-Agent Office 在 [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) 之上，additive 地加入一個 **Control Plane**：Project、可長期存在的 Agent 角色、Task、Skill 與 Knowledge。Pixel Office UI 保留作為 Agent 狀態與工作情況的視覺化介面。
+你照常在 Claude Code 裡呼叫 agent、子 agent、隊友與 skill；Agent Office 自動探索它們，並在 Agent 列表、詳情、呼叫歷史與像素辦公室中呈現執行狀態。Office 不啟動、不派工，也不修改 agent 的指示、記憶或成果——那些都留在各自的環境。完整模型見 [`docs/observation.md`](docs/observation.md)。
 
 > **Upstream attribution** — 本專案 fork 自 [pixel-agents-hq/pixel-agents](https://github.com/pixel-agents-hq/pixel-agents)（MIT License，author: Pablo de Lucca），base 為 `v1.4.1` / `3537e14`。
 > 原始 MIT `LICENSE` 完整保留。fork 來源與上游同步流程見 [`NOTICE`](NOTICE) 與 [`UPSTREAM.md`](UPSTREAM.md)。
@@ -10,49 +10,33 @@ Agent Office 在 [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)
 
 ## 架構
 
-三個平面。既有的 `AgentEvent` 觀測通道（單向，CLI → Control Plane）語意不變；Task 派發走一條全新的下行通道，不塞進 `AgentEvent`。
+| 部分                                                                   | 職責                                                                                     |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `core/`、`server/`、`webview-ui/`、`adapters/`                         | upstream Pixel Agents：hooks / transcript 觀測、像素辦公室、傳輸層                       |
+| `storage/`                                                             | 觀測資料（`~/.agent-office/agent-office.db` 的 `agent_calls`）與唯讀的 agent／skill 探索 |
+| `server/src/callLogBridge.ts`、`runRecords.ts`、`nativeAgentRoster.ts` | 把觀測到的活動轉成有依據的狀態；唯讀讀取 agent 既有的執行紀錄                            |
+| `webview-ui/src/control/`                                              | Agent 列表、詳情、呼叫歷史、探索設定                                                     |
 
-| 平面 | 職責 | 狀態 |
-|---|---|---|
-| **Presentation** — `webview-ui/` | Pixel Office 渲染、layout editor、（未來）Project switcher + Agent Inspector | upstream 既有，未改動 |
-| **Control Plane** — `domain/` `storage/` `server/src/control/` | 擁有 Project / Agent / Task / Skill / Knowledge / Output | 建置中 |
-| **Agent Runtime** — `runtime/` | 真正執行 Claude Code / Codex / 自訂 agent | 介面已定，實作未開始 |
-
-層級規則（擴充 upstream 的分層）：
+層級規則：
 
 ```
-domain/     → 依賴 nothing（provider-independent、storage-independent、UI-independent）
-storage/    → domain/
-runtime/    → domain/ + core/
-core/       → nothing            （upstream 原規則）
-server/     → core/ + domain/ + storage/ + runtime/
-webview-ui/ → core/ + domain/（僅型別）
+core/       → nothing
+storage/    → nothing（只用 node 與 SQLite）
+server/     → core/ + storage/
+webview-ui/ → core/
 adapters/   → core/ + server/
 ```
 
-## Milestones
-
-| # | 內容 | 狀態 |
-|---|---|---|
-| 0 | Repository Audit | ✅ 完成 |
-| 1 | Domain Model（Project / Agent / AgentSession / Task / Skill / Knowledge / Output）+ in-memory storage | ✅ 完成 |
-| 2 | Persistence Layer（file / SQLite） | 未開始 |
-| 3 | Project + Agent Management API | 未開始 |
-| 4 | Office UI：Project switcher + Agent Inspector | 未開始 |
-| 5 | Task Assignment | 未開始 |
-| 6 | Agent Runtime Bridge | 未開始 |
-| 7 | Knowledge / Memory retrieval | 未開始 |
-| 8 | Manager Agent orchestration | 未開始 |
-
 ## 文件
 
-| 文件 | 內容 |
-|---|---|
-| [`docs/architecture-audit.md`](docs/architecture-audit.md) | Milestone 0 — upstream 完整稽核與 data flow |
-| [`docs/architecture-proposal.md`](docs/architecture-proposal.md) | 提案架構、data model、migration strategy、cloud constraints |
-| [`docs/adr/`](docs/adr/) | Architecture Decision Records |
-| [`UPSTREAM.md`](UPSTREAM.md) | 上游同步流程與衝突面 |
-| `CLAUDE.md` / `CONTEXT.md` | upstream 的工程參考與詞彙表（已擴充分層規則） |
+| 文件                                                       | 內容                                                                                |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`docs/observation.md`](docs/observation.md)               | 純觀測模型：探索、狀態依據、去重、資料邊界、已知限制                                |
+| [`docs/windows-quickstart.md`](docs/windows-quickstart.md) | Windows 啟動與驗收步驟                                                              |
+| [`docs/adr/`](docs/adr/)                                   | Architecture Decision Records（[009](docs/adr/009-observation-only.md) 為現行定位） |
+| [`docs/architecture-audit.md`](docs/architecture-audit.md) | Milestone 0 — upstream 完整稽核與 data flow（歷史）                                 |
+| [`UPSTREAM.md`](UPSTREAM.md)                               | 上游同步流程與衝突面                                                                |
+| `CLAUDE.md` / `CONTEXT.md`                                 | upstream 的工程參考與詞彙表（已擴充分層規則）                                       |
 
 ## 開發
 
@@ -64,10 +48,9 @@ npm test
 npm run build
 ```
 
-Agent Office 新增的 workspace 可單獨測試：
+觀測儲存與探索可單獨測試：
 
 ```bash
-npm run test:domain
 npm run test:storage
 ```
 

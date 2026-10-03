@@ -297,11 +297,38 @@ CREATE INDEX idx_agent_calls_status ON agent_calls (status);
 `,
 };
 
+/**
+ * Migration 5 — observation-only call log (docs/observation.md).
+ *
+ * Additive: every existing row and table is left exactly as it was (the
+ * Project/Task/agent tables of migrations 1-3 are no longer read by this
+ * build, but they are kept, not dropped — the database is backed up before
+ * this runs, see `openObservationStorage`). New columns record how an
+ * invocation happened (`kind`), what its status rests on
+ * (`evidence_source`), a short summary instead of the full prompt, and the
+ * identity details learned later (teammate name, run id, phase).
+ */
+const MIGRATION_005: Migration = {
+  version: 5,
+  name: 'observation-call-log',
+  up: `
+ALTER TABLE agent_calls ADD COLUMN kind TEXT NOT NULL DEFAULT 'subagent';
+ALTER TABLE agent_calls ADD COLUMN source_kind TEXT;
+ALTER TABLE agent_calls ADD COLUMN activity_summary TEXT;
+ALTER TABLE agent_calls ADD COLUMN phase TEXT;
+ALTER TABLE agent_calls ADD COLUMN evidence_source TEXT;
+ALTER TABLE agent_calls ADD COLUMN last_seen_at TEXT;
+ALTER TABLE agent_calls ADD COLUMN teammate_name TEXT;
+ALTER TABLE agent_calls ADD COLUMN run_id TEXT;
+`,
+};
+
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_001,
   MIGRATION_002,
   MIGRATION_003,
   MIGRATION_004,
+  MIGRATION_005,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

@@ -1,3 +1,5 @@
+> **已被取代**：現行人物來源與去重規則見 [`observation.md`](observation.md) §5。
+
 # Office Agent 人物
 
 > **已由 [`task-log.md`](./task-log.md) 取代人物來源與呼叫觀測的部分**：人物現在來自

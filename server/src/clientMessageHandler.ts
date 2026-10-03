@@ -1,4 +1,3 @@
-import type { ClientMessage } from '../../core/src/messages.js';
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
@@ -13,11 +12,8 @@ import {
   writeConfig,
 } from './configPersistence.js';
 import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT } from './constants.js';
-import type { OfficeSession } from './control/officeMessageHandler.js';
-import { isOfficeClientMessage } from './control/officeMessageHandler.js';
-import { getOfficeStorage } from './control/officeStorage.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
-import { scanNativeAgentRosterSnapshot } from './nativeAgentRoster.js';
+import { handleSetDiscoveryConfig, sendObservationSnapshot } from './observationMessages.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
@@ -65,8 +61,6 @@ export interface ClientMessageContext {
    * to false so a caller that forgets to pass it gets the safe answer.
    */
   privileged?: boolean;
-  /** Per-connection Agent Office control-plane session. */
-  office?: OfficeSession;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -92,30 +86,6 @@ export function handleClientMessage(
 ): void {
   const { store, runtime, cache } = ctx;
   const adapter = store.getAdapter();
-
-  // Agent Office control plane (projects, agents, memberships, tasks). Handled
-  // by its own session object so the switch below stays upstream's.
-  //
-  // PRIVILEGED ONLY. These messages read and write every agent's instructions,
-  // skills and knowledge, so an unauthenticated socket must not reach them:
-  // this server listens on loopback, and loopback is exactly where a sandboxed
-  // run — or, under WSL, anything on the Windows side — would come from. The
-  // filesystem isolation would be worth nothing if the same data were readable
-  // over this channel without a credential.
-  if (isOfficeClientMessage(msg.type)) {
-    if (!ctx.privileged) {
-      send({
-        type: 'officeError',
-        operation: msg.type,
-        message: 'not authorized: the Agent Office control plane requires the server token',
-      });
-      return;
-    }
-    if (ctx.office) {
-      void ctx.office.handle(msg as unknown as ClientMessage, send);
-    }
-    return;
-  }
 
   switch (msg.type) {
     case 'webviewReady':
@@ -302,7 +272,11 @@ export function handleClientMessage(
     }
 
     case 'requestCallLog':
-      sendCallLogSnapshot(send);
+      sendObservationSnapshot(send);
+      break;
+
+    case 'setDiscoveryConfig':
+      handleSetDiscoveryConfig(msg, send, store, ctx.privileged === true);
       break;
 
     default:
@@ -390,40 +364,7 @@ function standaloneConsentEffects(
   };
 }
 
-/**
- * Send the current native-agent roster and the recent call log to one
- * client. The roster is a cheap synchronous filesystem scan; the call log is
- * read from storage when available and sent as an empty list (not an error)
- * when it is not — mirroring the "office still renders, it just cannot
- * persist" behavior the rest of storage.ts follows.
- */
-function sendCallLogSnapshot(send: WsSend): void {
-  const rosterSnapshot = scanNativeAgentRosterSnapshot();
-  send({ type: 'nativeAgentRoster', agents: rosterSnapshot.agents, root: rosterSnapshot.root });
-  const storage = getOfficeStorage();
-  if (!storage) {
-    send({ type: 'agentCallLogSnapshot', calls: [] });
-    return;
-  }
-  void storage.callLog
-    .listRecent(200)
-    .then((calls) => send({ type: 'agentCallLogSnapshot', calls }))
-    .catch((err: unknown) => {
-      console.error('[Agent Office] Call log: failed to load snapshot:', err);
-      send({ type: 'agentCallLogSnapshot', calls: [] });
-    });
-}
-
 function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
-  // Open the Agent Office database and push the first snapshot alongside the
-  // rest of the ready handshake, so the office has its persisted state from the
-  // first frame rather than after a round trip.
-  // Same gate as every other office message: an unprivileged socket watches
-  // the pixel office and is told nothing about projects or agents.
-  if (ctx.office && ctx.privileged) {
-    void ctx.office.initialState().then(send);
-  }
-
   const { store, runtime, cache } = ctx;
   const adapter = store.getAdapter();
 
@@ -434,11 +375,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     subagentToolNames: [...claudeProvider.subagentToolNames],
   });
 
-  // 1a. CC activity dashboard: native-agent roster + recent call log. Sent to
-  // every client unconditionally (read-only observed activity — the same
-  // trust level as the rest of this live broadcast, NOT the privileged
-  // Office CRUD control plane gated above).
-  sendCallLogSnapshot(send);
+  // 1a. Agent Office observation: discovered roster + recent call log. Sent
+  // to every client (read-only observed activity — the same trust level as
+  // the rest of this live broadcast).
+  sendObservationSnapshot(send);
 
   // 2. Assets (from server cache, loaded at startup via pngjs)
   if (cache) {

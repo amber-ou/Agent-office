@@ -1,6 +1,7 @@
 /**
  * Single source of truth for "what is this agent doing right now" —
- * combines the CC native-agent roster with the observed call log. Called
+ * combines the discovered roster (agents + shown skills) with the observed
+ * call log. Called
  * from `officeCharacters.ts` (the pixel character), `AgentPanel.tsx` (the
  * full list) and `AgentDetailPanel.tsx` (a single agent), so the three
  * views can never disagree about a status a caller only computed once,
@@ -24,6 +25,12 @@ export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
 const UNRESOLVED_TERMINAL_STATUSES: ReadonlySet<AgentCallLogEntry['status']> = new Set([
   'unknown',
   'background_not_tracked',
+]);
+
+/** Open with evidence that work is in progress (foreground or background). */
+const WORKING_STATUSES: ReadonlySet<AgentCallLogEntry['status']> = new Set([
+  'running',
+  'background_running',
 ]);
 
 /** `startedAt` is absent only when the start itself was never observed
@@ -61,7 +68,7 @@ export function deriveAgentState(calls: readonly AgentCallLogEntry[]): AgentStat
   const sorted = sortByRecencyDesc(calls);
   const waiting = sorted.filter((call) => call.status === 'waiting_response');
   if (waiting.length > 0) return { status: 'waiting_response', currentCall: waiting[0] };
-  const running = sorted.filter((call) => call.status === 'running');
+  const running = sorted.filter((call) => WORKING_STATUSES.has(call.status));
   if (running.length > 0) return { status: 'working', currentCall: running[0] };
   if (sorted.length === 0) return { status: 'idle' };
   const latest = sorted[0]!;
@@ -72,11 +79,14 @@ export function deriveAgentState(calls: readonly AgentCallLogEntry[]): AgentStat
 }
 
 export interface AgentSummary {
-  /** Stable identity — the roster file path. */
+  /** Stable identity — the definition file path. */
   key: string;
   name: string;
   description: string;
   ambiguous: boolean;
+  kind: NativeAgentRosterEntry['kind'];
+  scope: NativeAgentRosterEntry['scope'];
+  projectRoot?: string;
   status: AgentStatus;
   currentCall?: AgentCallLogEntry;
   /** Every call recorded for this agent, newest first. */
@@ -111,6 +121,9 @@ export function computeAgentSummaries(
       name: agent.name,
       description: agent.description,
       ambiguous: agent.ambiguous,
+      kind: agent.kind,
+      scope: agent.scope,
+      ...(agent.projectRoot ? { projectRoot: agent.projectRoot } : {}),
       status,
       currentCall,
       history: agentCalls,

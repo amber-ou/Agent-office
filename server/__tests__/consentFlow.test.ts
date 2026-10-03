@@ -11,7 +11,7 @@ import {
   grantHooksConsent,
   setHooksEnabled,
 } from '../src/configPersistence.js';
-import { closeOfficeStorage, setOfficeDataRoot } from '../src/control/officeStorage.js';
+import { closeOfficeStorage, setOfficeDataRoot } from '../src/control/observationStorage.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import {
   CONSENT_DISCLOSURE,

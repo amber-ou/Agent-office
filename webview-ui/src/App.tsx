@@ -233,7 +233,9 @@ function App() {
     editor.handleToggleEditMode,
   );
 
-  const handleCloseAgent = useCallback((id: number) => {
+  // Display-only: hides the character from the office. The server never
+  // closes or disposes the agent's terminal (observation only).
+  const handleHideAgent = useCallback((id: number) => {
     transport.send({ type: 'closeAgent', id });
   }, []);
 
@@ -449,7 +451,7 @@ function App() {
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
-            onCloseAgent={handleCloseAgent}
+            onCloseAgent={handleHideAgent}
             alwaysShowOverlay={alwaysShowOverlay}
           />
         </>
@@ -528,13 +530,11 @@ function App() {
 
       <BottomToolbar
         isEditMode={editor.isEditMode}
-        onOpenClaude={editor.handleOpenClaude}
         onToggleEditMode={editor.handleToggleEditMode}
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         isAgentPanelOpen={isAgentPanelOpen}
         onToggleAgentPanel={() => setIsAgentPanelOpen((v) => !v)}
-        workspaceFolders={workspaceFolders}
       />
 
       <AgentPanel

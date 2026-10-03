@@ -5,7 +5,7 @@ import path from 'path';
 
 import { getClaudeProjectDir } from './team';
 import { narrate } from './test-narration';
-import { clickAddAgent } from './webview';
+import { startClaudeInTerminal } from './webview';
 
 const INTERNAL_AGENT_TIMEOUT_MS = 20_000;
 
@@ -66,8 +66,8 @@ export async function spawnInternalAgentAndWait(
   // second spawn in the same test could read a stale log and return the first
   // agent's identity.
   const launchesBefore = countInvocations(readInvocationLog(mockLogFile));
-  narrate.step('clicking "+ Agent" — a terminal launches the mock claude');
-  await clickAddAgent(frame);
+  narrate.step('starting the mock claude in a terminal — the office only observes');
+  await startClaudeInTerminal(frame);
 
   await expect
     .poll(() => countInvocations(readInvocationLog(mockLogFile)), {
@@ -116,8 +116,8 @@ export async function spawnInternalAgentAndWaitForInvocation(
   // second spawn in the same test could read a stale log and return the first
   // agent's identity.
   const launchesBefore = countInvocations(readInvocationLog(mockLogFile));
-  narrate.step('clicking "+ Agent" — a terminal launches the mock claude');
-  await clickAddAgent(frame);
+  narrate.step('starting the mock claude in a terminal — the office only observes');
+  await startClaudeInTerminal(frame);
 
   await expect
     .poll(() => countInvocations(readInvocationLog(mockLogFile)), {
@@ -145,10 +145,9 @@ export async function spawnInternalAgentAndWaitForInvocation(
 
 /**
  * Spawn an agent bound to a specific workspace FOLDER in a multi-root window.
- * The plain "+ Agent" click opens a folder picker (BottomToolbar.tsx); we click
- * the named folder entry, which sends `launchAgent { folderPath }` so the agent
- * gets `folderName = <folder basename>` (adapters/vscode/agentManager.ts). Then
- * we wait for the spawn exactly like spawnInternalAgentAndWait. The seated
+ * The terminal starts in the named workspace folder (VS Code's own folder
+ * pick), so the adopted session's cwd is that folder. Then we wait for the
+ * spawn exactly like spawnInternalAgentAndWait. The seated
  * character surfaces via the getAgentSeats / getSeats test hooks (filter by
  * folderName), so callers correlate without an agent id here.
  */
@@ -159,14 +158,8 @@ export async function addAgentForFolder(
   mockLogFile: string,
 ): Promise<InternalAgentSpawn> {
   const launchesBefore = countInvocations(readInvocationLog(mockLogFile));
-  narrate.step(`clicking "+ Agent" and picking the "${folderName}" folder`);
-  await frame.locator('button', { hasText: '+ Agent' }).click();
-  // The folder-picker entries are <button> DropdownItems; scope to the button
-  // role so we don't collide with the same folder name shown as a <span> in an
-  // Area card's mapped-folders list (when the folder is already area-mapped).
-  const folderItem = frame.getByRole('button', { name: folderName, exact: true });
-  await expect(folderItem).toBeVisible({ timeout: INTERNAL_AGENT_TIMEOUT_MS });
-  await folderItem.click();
+  narrate.step(`starting the mock claude in a terminal in the "${folderName}" folder`);
+  await startClaudeInTerminal(frame, folderName);
 
   await expect
     .poll(() => countInvocations(readInvocationLog(mockLogFile)), {

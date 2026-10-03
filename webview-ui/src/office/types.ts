@@ -169,7 +169,9 @@ export interface Character {
   id: number;
   /** Persistent Office identity; absent for ordinary observed CLI sessions. */
   officeAgentId?: string;
-  officeStatus?: import('./engine/officeCharacters.js').OfficeCharacterStatus;
+  officeStatus?: import('../control/agentDirectory.js').AgentStatus;
+  /** Short observed detail (phase or activity summary) for the resident's label. */
+  officeDetail?: string;
   /** A runtime session already represented by an Office resident. */
   officeSuppressed?: boolean;
   state: CharacterState;

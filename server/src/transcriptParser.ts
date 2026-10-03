@@ -85,57 +85,90 @@ export function setTeamSwitchCallback(
 }
 
 /**
- * A `Task` tool call naming a `subagent_type` — the one reliably observable
- * "CC delegates to a named subagent" event (see docs/office-characters.md
- * and the call-log spec: a separately-launched `claude --agent X` session
- * carries no field tying it back to an agent name, so only this
- * within-conversation delegation is captured for the call log).
+ * Observation events for the Agent Office call log (server/src/callLogBridge.ts).
  *
- * `parentSessionId` is the real Claude session id of the conversation that
- * made the call — the call log's identity, never the process-local runtime
- * `agentId`. `toolUseId` is the stable JSONL tool_use id, paired with the
- * matching tool_result at `taskCallEndedCallback`.
+ * Emitted from transcript records only, and only where the record itself is
+ * the evidence. `sessionId` is the real Claude session id the record was
+ * read from — never the process-local runtime agentId. Hook-driven signals
+ * (permission prompts, turn ends) are observed by the bridge from the
+ * store's broadcasts instead, so this file stays a parser.
  */
-export interface TaskCallStartInfo {
-  agentId: number;
-  parentSessionId: string;
-  toolUseId: string;
-  subagentType: string;
-  prompt?: string;
-  description?: string;
-}
-let taskCallStartedCallback: ((info: TaskCallStartInfo) => void) | null = null;
-export function setTaskCallStartedCallback(cb: ((info: TaskCallStartInfo) => void) | null): void {
-  taskCallStartedCallback = cb;
+export type ObservationEvent =
+  /** A `Task`/`Agent` tool_use naming a `subagent_type`. */
+  | {
+      kind: 'delegateStart';
+      agentId: number;
+      sessionId: string;
+      toolUseId: string;
+      subagentType: string;
+      /** Short description input — the bridge summarizes, never stores the prompt. */
+      description?: string;
+      /** First line of the prompt, only used when there is no description. */
+      promptHead?: string;
+      /** `name` input: a teammate-to-be. */
+      teammateName?: string;
+      runInBackground: boolean;
+      cwd?: string;
+    }
+  /** The matching tool_result. `async` = a launch acknowledgment, not an
+   *  end; `teammate` = the spawn result named an implicit-team teammate. */
+  | {
+      kind: 'delegateResult';
+      agentId: number;
+      sessionId: string;
+      toolUseId: string;
+      outcome: 'completed' | 'error' | 'async' | 'teammate';
+      teammateName?: string;
+    }
+  /** A `queue-operation` notification that a background spawn finished. */
+  | {
+      kind: 'backgroundDone';
+      agentId: number;
+      sessionId: string;
+      toolUseId: string;
+      /** The `<status>` text, verbatim, when the notification carried one. */
+      status?: string;
+    }
+  /** A skill invocation: the `Skill` tool, or a `/name` slash command. */
+  | {
+      kind: 'skillStart';
+      agentId: number;
+      sessionId: string;
+      invocationId: string;
+      skill: string;
+      via: 'tool' | 'slash';
+      cwd?: string;
+    };
+
+let observationCallback: ((event: ObservationEvent) => void) | null = null;
+export function setObservationCallback(cb: ((event: ObservationEvent) => void) | null): void {
+  observationCallback = cb;
 }
 
-export interface TaskCallEndInfo {
-  agentId: number;
-  parentSessionId: string;
-  toolUseId: string;
-  isError: boolean;
-}
-let taskCallEndedCallback: ((info: TaskCallEndInfo) => void) | null = null;
-export function setTaskCallEndedCallback(cb: ((info: TaskCallEndInfo) => void) | null): void {
-  taskCallEndedCallback = cb;
+function firstLine(text: string): string | undefined {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
 }
 
-/**
- * The spawn's tool_result turned out to be an async launch acknowledgment
- * ("Async agent launched successfully...", see `isAsyncAgentResult`), not a
- * real completion — this call's actual end (if any) is not observed by this
- * version. Fired instead of `taskCallEndedCallback`, never both.
- */
-export interface TaskCallBackgroundInfo {
-  agentId: number;
-  parentSessionId: string;
-  toolUseId: string;
+/** `/figma-ui` → `figma-ui`; `plugin:skill` stays namespaced. */
+function slashCommandName(text: string): string | undefined {
+  const match = text.match(/<command-name>\s*\/?([^<\s]+)\s*<\/command-name>/);
+  return match?.[1];
 }
-let taskCallBackgroundCallback: ((info: TaskCallBackgroundInfo) => void) | null = null;
-export function setTaskCallBackgroundCallback(
-  cb: ((info: TaskCallBackgroundInfo) => void) | null,
-): void {
-  taskCallBackgroundCallback = cb;
+
+/** The skill name a `Skill` (or legacy `SlashCommand`) tool_use invokes. */
+function skillToolName(toolName: string, input: Record<string, unknown>): string | undefined {
+  if (toolName === 'Skill') {
+    const skill = input['skill'] ?? input['command'] ?? input['name'];
+    return typeof skill === 'string' && skill.trim() ? skill.trim().replace(/^\//, '') : undefined;
+  }
+  if (toolName === 'SlashCommand' && typeof input['command'] === 'string') {
+    const name = input['command'].trim().split(/\s+/)[0]?.replace(/^\//, '');
+    return name || undefined;
+  }
+  return undefined;
 }
 
 /** Format a tool status line. Delegates to the active HookProvider's formatToolStatus.
@@ -221,34 +254,48 @@ export function processTranscriptLine(
             if (!exemptTools().has(toolName)) {
               hasNonExemptTool = true;
             }
-            // Call-log capture: a foreground subagent delegation names its
-            // agent identity via `subagent_type` on the spawn tool's input.
-            // The tool is called `Task` on older CLI builds and `Agent` on
-            // current ones (CLAUDE.md's provider table) — both are accepted,
-            // since which one a given install emits is a CLI-version fact
-            // this code cannot assume. A `name` field alongside
-            // `subagent_type` marks a teammate-to-be (see `isTeammateSpawn`
-            // just below) — a persistent character tracked by the existing
-            // team mechanism, not a bounded call, so it is excluded here.
-            // `agent.sessionId` is the real Claude session id (the call
-            // log's identity), never the process-local runtime agentId.
+            // Call-log capture. A delegation names its agent identity via
+            // `subagent_type`; the tool is `Task` on older CLI builds and
+            // `Agent` on current ones — both are accepted. A `name` input
+            // marks a teammate-to-be; it is still recorded (kind teammate)
+            // so the teammate's activity has an identity, and the webview
+            // dedups it against the teammate's own character.
             if (
               (toolName === 'Task' || toolName === 'Agent') &&
-              typeof block.input?.['subagent_type'] === 'string' &&
-              typeof block.input?.['name'] !== 'string'
+              typeof block.input?.['subagent_type'] === 'string'
             ) {
-              taskCallStartedCallback?.({
+              const input = block.input;
+              const name = typeof input['name'] === 'string' ? input['name'].trim() : '';
+              observationCallback?.({
+                kind: 'delegateStart',
                 agentId,
-                parentSessionId: agent.sessionId,
+                sessionId: agent.sessionId,
                 toolUseId: block.id,
-                subagentType: block.input['subagent_type'],
-                ...(typeof block.input['prompt'] === 'string'
-                  ? { prompt: block.input['prompt'] }
+                subagentType: input['subagent_type'] as string,
+                ...(typeof input['description'] === 'string'
+                  ? { description: input['description'] }
                   : {}),
-                ...(typeof block.input['description'] === 'string'
-                  ? { description: block.input['description'] }
+                ...(typeof input['prompt'] === 'string'
+                  ? { promptHead: firstLine(input['prompt']) }
                   : {}),
+                ...(name ? { teammateName: name } : {}),
+                runInBackground: input['run_in_background'] === true,
+                ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
               });
+            }
+            {
+              const skill = skillToolName(toolName, block.input ?? {});
+              if (skill) {
+                observationCallback?.({
+                  kind: 'skillStart',
+                  agentId,
+                  sessionId: agent.sessionId,
+                  invocationId: block.id,
+                  skill,
+                  via: 'tool',
+                  ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
+                });
+              }
             }
             // Detect tmux vs inline team mode from the team provider's spawn predicate.
             if (
@@ -344,6 +391,34 @@ export function processTranscriptLine(
       processProgressRecord(agentId, record, agents, waitingTimers, permissionTimers);
     } else if (record.type === 'user') {
       const content = record.message?.content ?? record.content;
+      // Skill invoked as a slash command (`/figma-ui ...`): the user record
+      // carries `<command-name>/figma-ui</command-name>`. The record uuid is
+      // the invocation's stable id. Built-in commands (/clear, /model) pass
+      // through too; the bridge records only names that resolve to a shown
+      // skill definition.
+      if (record.isSidechain !== true && typeof record.uuid === 'string') {
+        const text =
+          typeof content === 'string'
+            ? content
+            : Array.isArray(content)
+              ? (content as Array<{ type?: string; text?: unknown }>)
+                  .filter((b) => b.type === 'text' && typeof b.text === 'string')
+                  .map((b) => b.text as string)
+                  .join('\n')
+              : '';
+        const command = text.includes('<command-name>') ? slashCommandName(text) : undefined;
+        if (command) {
+          observationCallback?.({
+            kind: 'skillStart',
+            agentId,
+            sessionId: agent.sessionId,
+            invocationId: record.uuid,
+            skill: command,
+            via: 'slash',
+            ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
+          });
+        }
+      }
       if (Array.isArray(content)) {
         const blocks = content as Array<{ type: string; tool_use_id?: string; content?: unknown }>;
         const hasToolResult = blocks.some((b) => b.type === 'tool_result');
@@ -352,6 +427,30 @@ export function processTranscriptLine(
             if (block.type === 'tool_result' && block.tool_use_id) {
               const completedToolId = block.tool_use_id;
               const completedToolName = agent.activeToolNames.get(completedToolId);
+              if (completedToolName === undefined) {
+                // A result for a tool this process never saw start: observation
+                // began mid-call (e.g. Office restarted). Still evidence for a
+                // call-log row that already exists; the bridge only updates
+                // existing rows, so an unrelated tool's result is a no-op.
+                const late = hookProvider?.team?.extractTeammateSpawnFromToolResult?.(
+                  'Agent',
+                  block.content,
+                );
+                observationCallback?.({
+                  kind: 'delegateResult',
+                  agentId,
+                  sessionId: agent.sessionId,
+                  toolUseId: completedToolId,
+                  outcome: late
+                    ? 'teammate'
+                    : isAsyncAgentResult(block)
+                      ? 'async'
+                      : (block as { is_error?: unknown }).is_error === true
+                        ? 'error'
+                        : 'completed',
+                  ...(late ? { teammateName: late.teammateName } : {}),
+                });
+              }
 
               // Teammate spawn result (newer harnesses: every Agent spawn is a
               // background teammate of an implicit team; the lead's own records
@@ -420,13 +519,13 @@ export function processTranscriptLine(
                 // completion time the call log must never produce, so a
                 // call started for this tool_use (i.e. one not excluded as
                 // a teammate-to-be) is instead marked explicitly untracked.
-                if (!agent.teammateSpawnToolIds?.has(completedToolId)) {
-                  taskCallBackgroundCallback?.({
-                    agentId,
-                    parentSessionId: agent.sessionId,
-                    toolUseId: completedToolId,
-                  });
-                }
+                observationCallback?.({
+                  kind: 'delegateResult',
+                  agentId,
+                  sessionId: agent.sessionId,
+                  toolUseId: completedToolId,
+                  outcome: 'async',
+                });
                 agent.backgroundAgentToolIds.add(completedToolId);
                 // Current harnesses OMIT run_in_background from the tool_use
                 // input, so the spawn's original agentToolStart went out
@@ -455,15 +554,21 @@ export function processTranscriptLine(
               console.log(
                 `[Pixel Agents] JSONL: Agent ${agentId} - tool done: ${block.tool_use_id}`,
               );
-              if (
-                (completedToolName === 'Task' || completedToolName === 'Agent') &&
-                !agent.teammateSpawnToolIds?.has(completedToolId)
-              ) {
-                taskCallEndedCallback?.({
+              if (completedToolName === 'Task' || completedToolName === 'Agent') {
+                // A spawn result naming an implicit-team teammate is not the
+                // teammate's end — it is its start. Everything else here is
+                // a real foreground result.
+                observationCallback?.({
+                  kind: 'delegateResult',
                   agentId,
-                  parentSessionId: agent.sessionId,
+                  sessionId: agent.sessionId,
                   toolUseId: completedToolId,
-                  isError: (block as { is_error?: unknown }).is_error === true,
+                  outcome: teammateSpawn
+                    ? 'teammate'
+                    : (block as { is_error?: unknown }).is_error === true
+                      ? 'error'
+                      : 'completed',
+                  ...(teammateSpawn ? { teammateName: teammateSpawn.teammateName } : {}),
                 });
               }
               // If the completed tool spawned a subagent, clear its subagent tools
@@ -522,6 +627,14 @@ export function processTranscriptLine(
         const toolIdMatch = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
         if (toolIdMatch) {
           const completedToolId = toolIdMatch[1];
+          const statusMatch = content.match(/<status>(.*?)<\/status>/);
+          observationCallback?.({
+            kind: 'backgroundDone',
+            agentId,
+            sessionId: agent.sessionId,
+            toolUseId: completedToolId,
+            ...(statusMatch ? { status: statusMatch[1].trim() } : {}),
+          });
           if (agent.backgroundAgentToolIds.has(completedToolId)) {
             console.log(
               `[Pixel Agents] Agent ${agentId} background agent done: ${completedToolId}`,

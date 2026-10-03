@@ -274,7 +274,7 @@ export async function closeAgentFromOverlay(
       : getOverlayByText(frame, options.text ?? '').first();
   await expect(overlay).toBeVisible({ timeout });
 
-  // Selecting an agent is what reveals its "Close agent" (×) button. The
+  // Selecting an agent is what reveals its hide (×) button. The
   // production path selects via a canvas hit-test on the sprite; driving that
   // from a test means computing pixel offsets below the overlay, which is
   // geometry-brittle and previously caused retry-flakes (e.g. the "close via
@@ -288,7 +288,8 @@ export async function closeAgentFromOverlay(
     window.__pixelAgentsTestHooks?.selectAgent?.(id);
   }, agentId);
 
-  const closeButton = overlay.locator('button[title="Close agent"]');
+  // Display-only "hide from office" — it never closes the agent itself.
+  const closeButton = overlay.locator('button[data-testid="hide-agent"]');
   await expect(closeButton).toBeVisible({ timeout });
   narrate.step('closing the agent via its "×" overlay button');
   await closeButton.click();

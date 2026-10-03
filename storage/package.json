@@ -1,7 +1,7 @@
 {
   "name": "@agent-office/storage",
   "private": true,
-  "description": "Storage adapters implementing the Agent Office domain ports.",
+  "description": "Agent Office observation storage: call log and read-only agent discovery.",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"

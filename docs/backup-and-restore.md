@@ -1,3 +1,8 @@
+> **2026-10-03 更新（ADR 009）**：Agent Office 現在只觀測。資料庫只寫入 `agent_calls`，
+> 升級 schema 前會自動建立 `agent-office.db.backup-v<版本>-<時間>`；`agents/`、`blobs/`、
+> `runtime/` 是舊版資料，不再讀寫也不會被刪除。備份請在停止 Office 後複製整個
+> `~/.agent-office`。下文描述的是舊版（管理／派工）資料模型，保留作為舊資料的還原參考。
+
 # Backing up and restoring Agent Office
 
 Agent Office keeps its data in one directory, `~/.agent-office` by default:

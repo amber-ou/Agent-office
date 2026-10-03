@@ -1,3 +1,5 @@
+> **已被取代（2026-10-03）**：派工、登錄與 Run／Review 流程已移除，Agent Office 現在是純觀測介面。見 [`observation.md`](observation.md) 與 [ADR 009](adr/009-observation-only.md)。下文保留為歷史紀錄。
+
 # Agent Office — 進度與下一步
 
 更新日期：2026-09-20 ｜ 分支 `v1.0` ｜ 開發端最後 commit `e377594`

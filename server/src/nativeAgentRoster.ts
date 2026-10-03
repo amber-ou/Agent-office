@@ -1,123 +1,94 @@
 /**
- * The CC-native agent roster: what Office shows as persistent, idle-capable
- * characters, read straight from `~/.claude/agents/**\/*.md`. Independent of
- * any Office `AgentDefinition`/`Project` — no link-native-agent step, no
- * project membership required (see docs/task-log.md).
+ * The discovered roster: what Office shows as persistent, idle-capable
+ * characters. Read straight from Claude Code's own definition files in the
+ * configured sources (see storage/src/files/nativeAgentDiscovery.ts) — no
+ * registration step, no Office-side agent record, nothing written.
  */
 
-import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-import type { NativeAgentRosterEntry } from '../../storage/src/index.js';
-import { discoverNativeAgents } from '../../storage/src/index.js';
+import type { DiscoveryResult, NativeAgentRosterEntry } from '../../storage/src/index.js';
+import { discoverDefinitions } from '../../storage/src/index.js';
 import type { AgentStateStore } from './agentStateStore.js';
-import { getClaudeDiscoveryPaths } from './control/officeStorage.js';
+import { loadDiscoveryConfig } from './control/discoveryConfig.js';
+import { getClaudeHome } from './control/observationStorage.js';
 
-const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
+/** Rescan cadence. Polling (not fs.watch) because a source directory that
+ *  does not exist yet must be noticed when it appears, and watching it would
+ *  mean creating it — which Office must never do. */
+export const ROSTER_POLL_INTERVAL_MS = 3000;
 
-export function scanNativeAgentRoster(): NativeAgentRosterEntry[] {
-  return discoverNativeAgents(getClaudeDiscoveryPaths().claudeAgentsRoot);
-}
-
-export interface NativeAgentRosterSnapshot {
-  agents: NativeAgentRosterEntry[];
-  /** The directory actually scanned — shown to the person when the roster
-   *  is empty, so "no agents found" names where Office looked. */
+export interface NativeAgentRosterSnapshot extends DiscoveryResult {
+  /** User-level agents directory — named when nothing was found. */
   root: string;
+  config: ReturnType<typeof loadDiscoveryConfig>;
 }
 
 export function scanNativeAgentRosterSnapshot(): NativeAgentRosterSnapshot {
-  const root = getClaudeDiscoveryPaths().claudeAgentsRoot;
-  return { agents: discoverNativeAgents(root), root };
+  const claudeHome = getClaudeHome();
+  const config = loadDiscoveryConfig();
+  return {
+    ...discoverDefinitions(claudeHome, config),
+    root: path.join(claudeHome, 'agents'),
+    config,
+  };
 }
 
-/**
- * Resolve a Task tool's `subagent_type` to a roster file. Recognized only
- * when exactly one roster entry (not itself ambiguous) declares that name —
- * the same "never guess by name" rule `officeCharacters.ts` uses for session
- * identity. A built-in name (e.g. `general-purpose`) or one no current file
- * declares resolves to `recognized: false`.
- */
-export function resolveNativeAgentByName(
-  subagentType: string,
-  roster: readonly NativeAgentRosterEntry[],
-): { agentFilePath?: string; recognized: boolean } {
-  const matches = roster.filter((a) => a.name === subagentType && !a.ambiguous);
-  if (matches.length === 1) {
-    return { agentFilePath: matches[0]!.filePath, recognized: true };
-  }
-  return { recognized: false };
+/** Shown definitions only — what identity resolution matches against. */
+export function scanNativeAgentRoster(): NativeAgentRosterEntry[] {
+  return scanNativeAgentRosterSnapshot().agents;
 }
+
+export function rosterMessage(snapshot: NativeAgentRosterSnapshot): Record<string, unknown> {
+  return {
+    type: 'nativeAgentRoster',
+    agents: snapshot.agents,
+    candidates: snapshot.candidates,
+    sources: snapshot.sources,
+    problems: snapshot.problems,
+    config: snapshot.config,
+    root: snapshot.root,
+  };
+}
+
+let lastFingerprint = '';
 
 export function broadcastNativeAgentRoster(store: AgentStateStore): NativeAgentRosterEntry[] {
-  const { agents, root } = scanNativeAgentRosterSnapshot();
-  store.broadcast({ type: 'nativeAgentRoster', agents, root });
-  return agents;
+  const snapshot = scanNativeAgentRosterSnapshot();
+  lastFingerprint = JSON.stringify(rosterMessage(snapshot));
+  store.broadcast(rosterMessage(snapshot));
+  return snapshot.agents;
 }
 
-let watcher: fs.FSWatcher | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Watch `~/.claude/agents` and re-broadcast the roster on change, so a new
- * agent file appears without a manual reload. Best effort: recursive
- * `fs.watch` is unsupported on some platforms, in which case this falls back
- * to a coarse poll rather than throwing — a person's ability to see the
- * roster must not depend on this succeeding.
+ * Re-broadcast the roster whenever any source changes, so a new agent or
+ * skill appears without a reload, a config edit, or an Office code change.
  */
 export function watchNativeAgentRoster(store: AgentStateStore): () => void {
   stopWatchingNativeAgentRoster();
-  const root = getClaudeDiscoveryPaths().claudeAgentsRoot;
-  const rescan = (): void => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => broadcastNativeAgentRoster(store), 300);
-  };
-  try {
-    fs.mkdirSync(root, { recursive: true });
-    watcher = fs.watch(root, { recursive: true }, () => rescan());
-    watcher.on('error', (err) => {
-      if (debug) {
-        console.log(
-          `[Pixel Agents] Native agent roster: fs.watch error (${err.message}), falling back to polling`,
-        );
-      }
-      startPolling(store);
-    });
-  } catch (err) {
-    if (debug) {
-      console.log(
-        `[Pixel Agents] Native agent roster: fs.watch unavailable (${
-          err instanceof Error ? err.message : String(err)
-        }), falling back to polling`,
-      );
+  pollTimer = setInterval(() => {
+    let message: Record<string, unknown>;
+    try {
+      message = rosterMessage(scanNativeAgentRosterSnapshot());
+    } catch (error) {
+      console.warn('[Agent Office] Roster scan failed:', error);
+      return;
     }
-    startPolling(store);
-  }
+    const fingerprint = JSON.stringify(message);
+    if (fingerprint !== lastFingerprint) {
+      lastFingerprint = fingerprint;
+      store.broadcast(message);
+    }
+  }, ROSTER_POLL_INTERVAL_MS);
+  pollTimer.unref?.();
   return stopWatchingNativeAgentRoster;
 }
 
-function startPolling(store: AgentStateStore): void {
-  if (pollTimer) return;
-  let lastFingerprint = '';
-  pollTimer = setInterval(() => {
-    const { agents, root } = scanNativeAgentRosterSnapshot();
-    const fingerprint = JSON.stringify(agents);
-    if (fingerprint !== lastFingerprint) {
-      lastFingerprint = fingerprint;
-      store.broadcast({ type: 'nativeAgentRoster', agents, root });
-    }
-  }, 3000);
-}
-
 export function stopWatchingNativeAgentRoster(): void {
-  watcher?.close();
-  watcher = null;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
-  }
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
   }
 }

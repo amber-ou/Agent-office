@@ -117,7 +117,7 @@ test.describe('Hooks OFF / lifecycle', () => {
 
   // Heuristic /resume reassignment at agent startup.
   //
-  // Scenario: user clicks + Agent → terminal runs `claude --session-id <UUID>`,
+  // Scenario: user starts claude in a terminal → it runs `claude --session-id <UUID>`,
   // but the user immediately types /resume (or aborts and runs claude --resume)
   // so the session generates a DIFFERENT id and writes to <other-id>.jsonl. The
   // expected <UUID>.jsonl NEVER materializes (withoutAutoInit models this). The

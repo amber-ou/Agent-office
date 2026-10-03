@@ -8,23 +8,19 @@ Pixel art office where AI agents (Claude Code terminals today, any tool tomorrow
 
 Strict layering: `core/` depends on nothing; `server/` depends only on `core/`; `webview-ui/` depends only on `core/`; `adapters/vscode/` depends on `core/` and `server/`. The standalone CLI never imports `adapters/vscode/` and vice versa.
 
-**Agent Office additions.** This fork adds a Control Plane alongside the upstream tree — see `UPSTREAM.md` for the additive rules and `docs/adr/` (3-digit series) for the decisions. The layering extends to:
+**Agent Office additions.** This fork adds an observation-only layer on top of the upstream tree — see `docs/observation.md` for the model and `docs/adr/009-observation-only.md` for the decision (`UPSTREAM.md` for the additive rules). Office never starts, dispatches, cancels or edits an agent, and never writes into `~/.claude` (hooks install aside, which is upstream's consent-gated path). The layering extends to:
 
 ```
-domain/     → depends on nothing      Project / AgentDefinition / AgentSession / Task / Skill /
-                                      Knowledge / Output, storage ports, resolveAgentStatus.
-                                      No provider, no storage, no host API, no `node:` import.
-                                      No `enum` (webview-ui imports it under erasableSyntaxOnly).
-storage/    → domain/                 Adapters for the domain ports. In-memory today; file /
-                                      SQLite / Postgres later. Data root `~/.agent-office/`,
-                                      separate from upstream's `~/.pixel-agents/`.
-runtime/    → domain/ + core/         AgentRuntimeAdapter: the DOWNWARD channel (task dispatch).
-                                      Interface only until Milestone 6.
-server/     → core/ + domain/ + storage/ + runtime/
-webview-ui/ → core/ + domain/ (types only)
+storage/    → depends on nothing      Observation storage: `agent_calls` in ~/.agent-office/agent-office.db
+                                      (backup before any migration; old tables never dropped) and the
+                                      read-only agent/skill discovery scan. No host API, no provider.
+server/     → core/ + storage/        callLogBridge (evidence-backed call states), nativeAgentRoster
+                                      (discovery poll), runRecords (read-only agent run records),
+                                      control/ (observation storage + discovery config)
+webview-ui/ → core/                   control/ (Agent panel, detail, discovery settings)
 ```
 
-The upstream `AgentEvent` channel stays one-way and observational. Task dispatch is a separate downward channel and is never added to `AgentEvent` (ADR 003).
+The upstream `AgentEvent` channel stays one-way and observational. There is no downward (dispatch) channel any more (ADR 009 supersedes ADR 003).
 
 ```
 core/                                Protocol + interface definitions (zero runtime side effects)

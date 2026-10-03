@@ -14,6 +14,7 @@ import * as path from 'path';
 
 import type { HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import type { CallLogBridge } from './callLogBridge.js';
 import { installCallLogBridge } from './callLogBridge.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from './constants.js';
 import { DismissalTracker } from './dismissalTracker.js';
@@ -38,6 +39,7 @@ import {
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import { broadcastNativeAgentRoster, watchNativeAgentRoster } from './nativeAgentRoster.js';
+import { notifyTeammateDeparture } from './observationHooks.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
 import { SessionRouter } from './sessionRouter.js';
@@ -84,6 +86,8 @@ export class AgentRuntime {
   readonly dismissalTracker = new DismissalTracker();
   /** Shadow-store watcher for unnamed background spawns (sub-agents). */
   readonly subagentWatch: SubagentWatch;
+  private readonly callLogBridge: CallLogBridge;
+  private readonly stopRosterWatch: () => void;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
 
@@ -95,14 +99,14 @@ export class AgentRuntime {
     setDismissalTracker(this.dismissalTracker);
     setHookProvider(provider);
     setFileWatcherHookProvider(provider);
-    // CC activity dashboard: the native-agent roster and the observed call
-    // log are independent of hooks/teams and of any Office project, so they
-    // are wired once here rather than threaded through the hook/team setup
-    // below. Roster scan is best-effort and never throws; call log capture
-    // is a no-op when the Office database failed to open.
+    // Agent Office observation: the discovered roster and the observed call
+    // log are independent of hooks/teams, so they are wired once here rather
+    // than threaded through the hook/team setup below. Roster scan is
+    // best-effort and never throws; call log capture is a no-op when the
+    // Office database failed to open. Neither writes outside ~/.agent-office.
     broadcastNativeAgentRoster(store);
-    watchNativeAgentRoster(store);
-    installCallLogBridge(store);
+    this.stopRosterWatch = watchNativeAgentRoster(store);
+    this.callLogBridge = installCallLogBridge(store);
     this.subagentWatch = new SubagentWatch(store);
     setSubagentWatch(this.subagentWatch);
     if (provider.team) {
@@ -352,6 +356,15 @@ export class AgentRuntime {
     const agent = this.store.get(teammateId);
     if (!agent) return;
     console.log(`[Pixel Agents] Removing teammate ${teammateId} (source: ${source})`);
+    const lead = agent.leadAgentId !== undefined ? this.store.get(agent.leadAgentId) : undefined;
+    if (lead?.sessionId) {
+      notifyTeammateDeparture({
+        leadSessionId: lead.sessionId,
+        ...(agent.agentName ? { teammateName: agent.agentName } : {}),
+        ...(agent.spawnToolUseId ? { spawnToolUseId: agent.spawnToolUseId } : {}),
+        source,
+      });
+    }
     this.dismissalTracker.dismiss(agent.jsonlFile);
     // Background teammates (spawnToolUseId set) share the LEAD's session id;
     // unregistering it would knock the lead itself out of the session router.
@@ -568,6 +581,8 @@ export class AgentRuntime {
 
   /** Clean up all scanners, timers, and agents. Called on shutdown. */
   dispose(): void {
+    this.stopRosterWatch();
+    this.callLogBridge.dispose();
     this.hookEventHandler.dispose();
     this.subagentWatch.dispose();
 

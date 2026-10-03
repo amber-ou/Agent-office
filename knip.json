@@ -21,8 +21,7 @@
     "webview-ui/src/office/editor/index.ts",
     "webview-ui/src/office/engine/index.ts",
     "webview-ui/src/office/layout/index.ts",
-    "webview-ui/src/office/sprites/index.ts",
-    "runtime/src/index.ts"
+    "webview-ui/src/office/sprites/index.ts"
   ],
   "workspaces": {
     ".": {
@@ -34,8 +33,7 @@
         "adapters/vscode/**/*.ts",
         "core/src/**/*.ts",
         "e2e/**/*.ts",
-        "scripts/**/*.{ts,mjs}",
-        "runtime/src/**/*.ts"
+        "scripts/**/*.{ts,mjs}"
       ]
     },
     "server": {
@@ -57,16 +55,6 @@
         "src/**/*.{ts,tsx}"
       ]
     },
-    "domain": {
-      "entry": [
-        "src/index.ts",
-        "__tests__/**/*.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "__tests__/**/*.ts"
-      ]
-    },
     "storage": {
       "entry": [
         "src/index.ts",
@@ -77,9 +65,5 @@
         "__tests__/**/*.ts"
       ]
     }
-  },
-  "ignoreBinaries": [
-    "bwrap",
-    "findmnt"
-  ]
+  }
 }

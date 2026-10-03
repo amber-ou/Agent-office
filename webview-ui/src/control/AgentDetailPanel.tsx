@@ -10,7 +10,15 @@ import { useEffect, useState } from 'react';
 
 import { Modal } from '../components/ui/Modal.js';
 import { AGENT_STATUS_LABELS } from './agentDirectory.js';
-import { CALL_STATUS_LABELS, durationLabel, formatTimestamp } from './callLogFormat.js';
+import {
+  activityText,
+  agentLabel,
+  CALL_KIND_LABELS,
+  CALL_STATUS_LABELS,
+  durationLabel,
+  evidenceLabel,
+  formatTimestamp,
+} from './callLogFormat.js';
 import { useAgentDirectory } from './useAgentDirectory.js';
 
 interface AgentDetailPanelProps {
@@ -53,25 +61,56 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
         )}
         {!agent ? (
           <p className="text-text-muted text-sm py-4">
-            找不到這個 Agent，可能已從 CC 的 Agent 名單移除。
+            找不到這個 Agent，可能已從探索來源移除或被設定隱藏。
           </p>
         ) : (
           <>
             {agent.description && <p className={rowLabel}>{agent.description}</p>}
             <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+              <span className={rowLabel}>來源</span>
+              <span className="break-all">
+                {agent.kind === 'skill' ? 'Skill' : 'Agent'}・
+                {agent.scope === 'project' ? `專案 ${agent.projectRoot ?? ''}` : '使用者'}
+                <br />
+                <span className={rowLabel}>{agent.key}</span>
+                {agent.ambiguous && (
+                  <span className="text-warning"> （名稱衝突：活動不會歸屬到這個定義）</span>
+                )}
+              </span>
+
               <span className={rowLabel}>狀態</span>
               <span>{AGENT_STATUS_LABELS[agent.status]}</span>
 
-              <span className={rowLabel}>目前任務</span>
+              <span className={rowLabel}>目前活動</span>
               <span>
                 {agent.status === 'idle' || !agent.currentCall
-                  ? '目前無執行任務'
-                  : agent.currentCall.taskText ||
-                    agent.currentCall.taskDescription || (
-                      <span className={rowLabel}>（未取得任務內容）</span>
-                    )}
-                {!agent.everCalled && <span className={rowLabel}> ・尚未呼叫</span>}
+                  ? '目前無執行中的活動'
+                  : activityText(agent.currentCall)}
+                {!agent.everCalled && <span className={rowLabel}> ・尚未觀測到呼叫</span>}
               </span>
+
+              {agent.currentCall && agent.status !== 'idle' && (
+                <>
+                  <span className={rowLabel}>呼叫方式</span>
+                  <span>
+                    {agentLabel(agent.currentCall)}・{CALL_KIND_LABELS[agent.currentCall.kind]}
+                  </span>
+
+                  {agent.currentCall.phase && (
+                    <>
+                      <span className={rowLabel}>階段</span>
+                      <span>{agent.currentCall.phase}</span>
+                    </>
+                  )}
+
+                  {evidenceLabel(agent.currentCall) && (
+                    <>
+                      <span className={rowLabel}>狀態依據</span>
+                      <span>{evidenceLabel(agent.currentCall)}</span>
+                    </>
+                  )}
+                </>
+              )}
 
               {agent.currentCall && (
                 <>
@@ -116,11 +155,17 @@ export function AgentDetailPanel({ agentKey, onClose }: AgentDetailPanelProps) {
                         <span>{CALL_STATUS_LABELS[call.status]}</span>
                         <span>{durationLabel(call, now)}</span>
                       </div>
+                      <div className="mt-1 text-sm text-text-muted">
+                        {expanded ? activityText(call) : activityText(call).slice(0, 60)}
+                      </div>
                       {expanded && (
-                        <div className="mt-2 text-sm whitespace-pre-wrap break-words">
-                          {call.taskText || call.taskDescription || (
-                            <span className={rowLabel}>（未取得任務內容）</span>
-                          )}
+                        <div className="mt-1 text-xs text-text-muted whitespace-pre-wrap break-words">
+                          {CALL_KIND_LABELS[call.kind]}
+                          {call.teammateName && `・隊友 ${call.teammateName}`}
+                          {call.phase && `・階段：${call.phase}`}
+                          {call.runId && `・執行紀錄：${call.runId}`}
+                          {evidenceLabel(call) && `・依據：${evidenceLabel(call)}`}
+                          {call.endedAt && `・結束 ${formatTimestamp(call.endedAt)}`}
                         </div>
                       )}
                     </li>

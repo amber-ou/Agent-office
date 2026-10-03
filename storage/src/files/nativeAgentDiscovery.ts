@@ -1,168 +1,328 @@
 /**
- * Whether a linked native agent's `--agent <name>` will actually resolve to
- * the file Office thinks it did, in the ONE scope Office can confirm:
- * user-level `~/.claude/agents/`, scanned recursively — the same root
- * `ccDiscoveryPaths.claudeAgentsRoot` already names for the Office→CC
- * direction of this bridge.
+ * Automatic, read-only discovery of the Claude Code agents and skills Office
+ * can observe (docs/observation.md §Discovery).
  *
- * Two failure modes, both refused rather than guessed past:
+ * Sources, in the scopes Claude Code itself uses:
  *
- *  - The file lives OUTSIDE that tree. Claude Code also scans project-level
- *    `.claude/agents/` (walking up from the run's cwd), but Office has no
- *    single answer for "the run's cwd" independent of the sandbox it is
- *    about to build, so that scope is not checked — a file out here is
- *    refused rather than silently trusted.
- *  - Another `.md` file under the SAME tree declares the same `name:`. CC
- *    resolves `--agent <name>` by name alone (see `sub-agents.md`); two
- *    files with the same name is exactly the situation where it could pick
- *    the wrong one, and Office has no way to know which. Refused, never
- *    silently dispatched against either.
+ *   user     `<claudeHome>/agents/**\/*.md`, `<claudeHome>/skills/<name>/SKILL.md`
+ *   project  `<root>/.claude/agents/**\/*.md`, `<root>/.claude/skills/<name>/SKILL.md`
+ *            for every project root the person configured in Office.
+ *
+ * Every agent definition found is shown. A skill is shown only when the
+ * Office discovery config includes it (`skillInclude`) — most skills are
+ * helpers, not something a person wants as a character. Hidden skills are
+ * still returned as candidates so the person can pick them.
+ *
+ * Nothing here writes, creates a directory, or follows anything but the
+ * definition files' own front matter (name, description). A missing source
+ * directory is reported as "not found", never created. A file that cannot
+ * be parsed is reported as a problem, never guessed at.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { parseNativeAgentFile } from './nativeAgentFile.js';
+import { parseNativeAgentFile, parseSkillFile } from './nativeAgentFile.js';
 
-export interface NativeAgentDiscoverability {
-  ok: boolean;
-  reason?: string;
+export type DefinitionKind = 'agent' | 'skill';
+export type DiscoveryScope = 'user' | 'project';
+
+/** Office's own discovery settings — not an agent definition. */
+export interface DiscoveryConfig {
+  /** Scan `<claudeHome>/agents`. */
+  includeUserAgents: boolean;
+  /** Scan `<claudeHome>/skills` (as candidates; see `skillInclude`). */
+  includeUserSkills: boolean;
+  /** Local project roots whose `.claude/agents` and `.claude/skills` are scanned. */
+  projectRoots: string[];
+  /** Skill names (exact, or with `*` wildcards) shown as agents. */
+  skillInclude: string[];
 }
 
-export function verifyNativeAgentDiscoverable(
-  nativeAgentPath: string,
-  ccName: string,
-  claudeAgentsRoot: string,
-): NativeAgentDiscoverability {
-  const absolute = path.resolve(nativeAgentPath);
-  const root = path.resolve(claudeAgentsRoot);
-  if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-    return {
-      ok: false,
-      reason:
-        `${absolute} is outside ${root}, which is where Claude Code looks for user-level ` +
-        `subagents (it also scans a project's own .claude/agents/, but Office cannot confirm ` +
-        `that scope independently of the run it is about to start, so a file outside the user-` +
-        `level tree is refused rather than assumed reachable). Move the file under ` +
-        `${root} and re-link it.`,
-    };
-  }
+export const DEFAULT_DISCOVERY_CONFIG: DiscoveryConfig = {
+  includeUserAgents: true,
+  includeUserSkills: true,
+  projectRoots: [],
+  // The first skill workflow Office observes; editable in the Agent panel.
+  skillInclude: ['figma-ui'],
+};
 
-  const collisions = findOtherFilesWithName(root, ccName, absolute);
-  if (collisions.length > 0) {
-    return {
-      ok: false,
-      reason:
-        `${collisions.length} other file(s) under ${root} also declare name "${ccName}": ` +
-        `${collisions.join(', ')}. Claude Code resolves --agent by name alone, so which file ` +
-        `it loads is ambiguous. Give this agent a unique name and re-link it.`,
-    };
-  }
-  return { ok: true };
+export interface DiscoverySource {
+  kind: DefinitionKind;
+  scope: DiscoveryScope;
+  /** The directory scanned. */
+  root: string;
+  /** For project scope: the configured project root it belongs to. */
+  projectRoot?: string;
+  exists: boolean;
 }
 
 /**
- * One valid, parseable native agent file found under the roster scan.
- * `ambiguous` mirrors `verifyNativeAgentDiscoverable`'s name-collision check:
- * set when another file under the same root declares the same `name`, since
- * Office cannot then say which file `--agent <name>` would actually run.
- * A roster entry is shown either way — the ambiguity is surfaced to the
- * person, not hidden — but is never treated as a resolvable identity for a
- * dispatch match.
+ * One parseable definition. `ambiguous` is set when another definition of
+ * the same kind and name exists in the same source directory — Claude Code
+ * could then load either, so it is never treated as a resolvable identity.
  */
 export interface NativeAgentRosterEntry {
   name: string;
   description: string;
   filePath: string;
   ambiguous: boolean;
+  kind: DefinitionKind;
+  scope: DiscoveryScope;
+  projectRoot?: string;
 }
 
-/**
- * Every valid `~/.claude/agents/**\/*.md` file, read fresh — this is the
- * whole CC agent roster Office can observe, independent of whether any of
- * them has ever been linked into an Office `AgentDefinition`. A file that
- * fails to parse (no front matter, no `name`, an unresolved conflict marker)
- * is silently left out: it is not a subagent definition Claude Code itself
- * could run either.
- */
-export function discoverNativeAgents(claudeAgentsRoot: string): NativeAgentRosterEntry[] {
-  const root = path.resolve(claudeAgentsRoot);
+export interface DiscoveryProblem {
+  filePath: string;
+  reason: string;
+}
+
+export interface DiscoveryResult {
+  /** Shown definitions: every agent, plus skills the config includes. */
+  agents: NativeAgentRosterEntry[];
+  /** Skills found but not included — offered to the person, not shown. */
+  candidates: NativeAgentRosterEntry[];
+  sources: DiscoverySource[];
+  problems: DiscoveryProblem[];
+}
+
+function direntDir(entry: fs.Dirent, fallback: string): string {
+  // Node <22 sets `.path` instead of `.parentPath` for the same value.
+  return (
+    (entry as fs.Dirent & { parentPath?: string; path?: string }).parentPath ??
+    (entry as fs.Dirent & { path?: string }).path ??
+    fallback
+  );
+}
+
+function isDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function readText(filePath: string, problems: DiscoveryProblem[]): string | null {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    problems.push({
+      filePath,
+      reason: `unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return null;
+  }
+}
+
+type Found = Omit<NativeAgentRosterEntry, 'ambiguous'>;
+
+function scanAgents(source: DiscoverySource, problems: DiscoveryProblem[]): Found[] {
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(root, { withFileTypes: true, recursive: true });
+    entries = fs.readdirSync(source.root, { withFileTypes: true, recursive: true });
   } catch {
     return [];
   }
-
-  const found: { name: string; description: string; filePath: string }[] = [];
+  const found: Found[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md')) {
-      continue;
-    }
-    const dir =
-      (entry as fs.Dirent & { parentPath?: string; path?: string }).parentPath ??
-      (entry as fs.Dirent & { path?: string }).path ??
-      root;
-    const filePath = path.join(dir, entry.name);
-    let text: string;
-    try {
-      text = fs.readFileSync(filePath, 'utf8');
-    } catch {
-      continue;
-    }
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const filePath = path.join(direntDir(entry, source.root), entry.name);
+    const text = readText(filePath, problems);
+    if (text === null) continue;
     const parsed = parseNativeAgentFile(text);
     if (!parsed.ok) {
+      problems.push({ filePath, reason: parsed.reason });
       continue;
     }
     found.push({
       name: parsed.agent.fields.name,
       description: parsed.agent.fields.description,
       filePath,
+      kind: 'agent',
+      scope: source.scope,
+      ...(source.projectRoot ? { projectRoot: source.projectRoot } : {}),
     });
   }
-
-  const byName = new Map<string, number>();
-  for (const agent of found) {
-    byName.set(agent.name, (byName.get(agent.name) ?? 0) + 1);
-  }
-  return found.map((agent) => ({ ...agent, ambiguous: (byName.get(agent.name) ?? 0) > 1 }));
+  return found;
 }
 
-/** Every `.md` file under `root` (recursively, `excluding`) whose front
- *  matter `name` field equals `name`. A file that fails to parse is simply
- *  not a match — it cannot be what `--agent <name>` resolves to either. */
-function findOtherFilesWithName(root: string, name: string, excluding: string): string[] {
-  const matches: string[] = [];
-  let entries: fs.Dirent[];
+function scanSkills(source: DiscoverySource, problems: DiscoveryProblem[]): Found[] {
+  let dirs: fs.Dirent[];
   try {
-    entries = fs.readdirSync(root, { withFileTypes: true, recursive: true });
+    dirs = fs.readdirSync(source.root, { withFileTypes: true });
   } catch {
-    return matches;
+    return [];
   }
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.md')) {
+  const found: Found[] = [];
+  for (const dir of dirs) {
+    if (!dir.isDirectory() && !dir.isSymbolicLink()) continue;
+    const filePath = path.join(source.root, dir.name, 'SKILL.md');
+    if (!fs.existsSync(filePath)) continue;
+    const text = readText(filePath, problems);
+    if (text === null) continue;
+    const parsed = parseSkillFile(text, dir.name);
+    if (!parsed.ok) {
+      problems.push({ filePath, reason: parsed.reason });
       continue;
     }
-    // Node <22 does not set `entry.parentPath`; `.path` is the documented
-    // fallback (deprecated but present) for the same value.
-    const dir =
-      (entry as fs.Dirent & { parentPath?: string; path?: string }).parentPath ??
-      (entry as fs.Dirent & { path?: string }).path ??
-      root;
-    const file = path.join(dir, entry.name);
-    if (path.resolve(file) === excluding) {
-      continue;
+    found.push({
+      name: parsed.agent.fields.name,
+      description: parsed.agent.fields.description,
+      filePath,
+      kind: 'skill',
+      scope: source.scope,
+      ...(source.projectRoot ? { projectRoot: source.projectRoot } : {}),
+    });
+  }
+  return found;
+}
+
+/** `*` matches any run of characters; everything else is literal. */
+export function matchesSkillPattern(name: string, pattern: string): boolean {
+  const escaped = pattern
+    .trim()
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return escaped.length > 0 && new RegExp(`^${escaped}$`, 'i').test(name);
+}
+
+export function discoverySources(claudeHome: string, config: DiscoveryConfig): DiscoverySource[] {
+  const sources: DiscoverySource[] = [];
+  const add = (kind: DefinitionKind, scope: DiscoveryScope, root: string, projectRoot?: string) =>
+    sources.push({
+      kind,
+      scope,
+      root: path.resolve(root),
+      ...(projectRoot ? { projectRoot: path.resolve(projectRoot) } : {}),
+      exists: isDirectory(root),
+    });
+  if (config.includeUserAgents) add('agent', 'user', path.join(claudeHome, 'agents'));
+  if (config.includeUserSkills) add('skill', 'user', path.join(claudeHome, 'skills'));
+  const seen = new Set<string>();
+  for (const projectRoot of config.projectRoots) {
+    const resolved = path.resolve(projectRoot);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    add('agent', 'project', path.join(resolved, '.claude', 'agents'), resolved);
+    add('skill', 'project', path.join(resolved, '.claude', 'skills'), resolved);
+  }
+  return sources;
+}
+
+/** Scan every configured source. Read-only and never throws. */
+export function discoverDefinitions(claudeHome: string, config: DiscoveryConfig): DiscoveryResult {
+  const sources = discoverySources(claudeHome, config);
+  const problems: DiscoveryProblem[] = [];
+  const all: NativeAgentRosterEntry[] = [];
+  for (const source of sources) {
+    if (!source.exists) continue;
+    const found =
+      source.kind === 'agent' ? scanAgents(source, problems) : scanSkills(source, problems);
+    const counts = new Map<string, number>();
+    for (const f of found) counts.set(f.name, (counts.get(f.name) ?? 0) + 1);
+    for (const f of found) {
+      const ambiguous = (counts.get(f.name) ?? 0) > 1;
+      all.push({ ...f, ambiguous });
     }
-    let text: string;
-    try {
-      text = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    const parsed = parseNativeAgentFile(text);
-    if (parsed.ok && parsed.agent.fields.name === name) {
-      matches.push(file);
+    for (const [name, count] of counts) {
+      if (count > 1) {
+        problems.push({
+          filePath: source.root,
+          reason: `${count} ${source.kind} definitions declare the name "${name}" — none of them is matched to activity until the names are unique`,
+        });
+      }
     }
   }
-  return matches;
+  const agents: NativeAgentRosterEntry[] = [];
+  const candidates: NativeAgentRosterEntry[] = [];
+  for (const entry of all) {
+    if (
+      entry.kind === 'agent' ||
+      config.skillInclude.some((p) => matchesSkillPattern(entry.name, p))
+    ) {
+      agents.push(entry);
+    } else {
+      candidates.push(entry);
+    }
+  }
+  return { agents, candidates, sources, problems };
+}
+
+/** User-level agents only — the previous version's roster, kept for callers
+ *  that need just `<root>/**\/*.md`. */
+export function discoverNativeAgents(claudeAgentsRoot: string): NativeAgentRosterEntry[] {
+  const problems: DiscoveryProblem[] = [];
+  const source: DiscoverySource = {
+    kind: 'agent',
+    scope: 'user',
+    root: path.resolve(claudeAgentsRoot),
+    exists: isDirectory(claudeAgentsRoot),
+  };
+  const found = source.exists ? scanAgents(source, problems) : [];
+  const counts = new Map<string, number>();
+  for (const f of found) counts.set(f.name, (counts.get(f.name) ?? 0) + 1);
+  return found.map((f) => ({ ...f, ambiguous: (counts.get(f.name) ?? 0) > 1 }));
+}
+
+function pathContains(root: string, target: string): boolean {
+  const norm = (p: string) => {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const r = norm(root);
+  const t = norm(target);
+  return t === r || t.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+}
+
+export interface ResolvedIdentity {
+  recognized: boolean;
+  entry?: NativeAgentRosterEntry;
+  /** Why it was not recognized, for diagnostics. */
+  reason?: string;
+}
+
+/**
+ * Resolve an observed name to exactly one shown definition, following
+ * Claude Code's own precedence: a project definition (whose project root
+ * contains the session's working directory) wins over a user-level one of
+ * the same name. Never a guess: an ambiguous scope, or a project definition
+ * with no session directory to place it, is "not recognized".
+ */
+export function resolveDefinition(
+  name: string,
+  kind: DefinitionKind,
+  shown: readonly NativeAgentRosterEntry[],
+  cwd: string | undefined,
+): ResolvedIdentity {
+  const sameName = shown.filter((e) => e.kind === kind && e.name === name);
+  if (sameName.length === 0) return { recognized: false, reason: 'no discovered definition' };
+  if (cwd) {
+    const project = sameName.filter(
+      (e) => e.scope === 'project' && e.projectRoot && pathContains(e.projectRoot, cwd),
+    );
+    if (project.length > 0) {
+      // Nested project roots: the innermost one is the session's project.
+      const depth = (e: NativeAgentRosterEntry) => path.resolve(e.projectRoot!).length;
+      const innermost = Math.max(...project.map(depth));
+      const winners = project.filter((e) => depth(e) === innermost);
+      if (winners.length === 1 && !winners[0]!.ambiguous) {
+        return { recognized: true, entry: winners[0] };
+      }
+      return { recognized: false, reason: 'ambiguous project definition' };
+    }
+  }
+  const user = sameName.filter((e) => e.scope === 'user');
+  if (user.length === 1 && !user[0]!.ambiguous) return { recognized: true, entry: user[0] };
+  if (user.length > 1 || user.some((e) => e.ambiguous)) {
+    return { recognized: false, reason: 'ambiguous user definition' };
+  }
+  return {
+    recognized: false,
+    reason: cwd
+      ? 'only project definitions outside the session directory'
+      : 'session directory unknown',
+  };
 }

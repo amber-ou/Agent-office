@@ -1,29 +1,21 @@
 /**
- * Call-log capture in transcriptParser.ts: the observation points the CC
- * activity dashboard is built on (see docs/task-log.md). Two CLI-version
- * facts drive this file's cases, both taken from CLAUDE.md's own provider
- * table rather than assumed: the foreground subagent-delegation tool is
- * named `Task` on older builds and `Agent` on current ones, and an
- * Agent-tool spawn carrying a `name` field is a teammate-to-be, not a
- * bounded call, so it must be excluded here (the existing team mechanism
- * already tracks it as a persistent character).
+ * Observation events from transcriptParser.ts — the evidence the Agent
+ * Office call log is built on (docs/observation.md). Covers both spawn tool
+ * names (`Task` on older CLI builds, `Agent` on current ones), teammate
+ * spawns (named, and implicit-team results), async launch acks, background
+ * completion via queue-operation, and skill invocations (Skill tool and
+ * slash command).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
-import type {
-  TaskCallBackgroundInfo,
-  TaskCallEndInfo,
-  TaskCallStartInfo,
-} from '../src/transcriptParser.js';
+import type { ObservationEvent } from '../src/transcriptParser.js';
 import {
   processTranscriptLine,
   setHookProvider,
-  setTaskCallBackgroundCallback,
-  setTaskCallEndedCallback,
-  setTaskCallStartedCallback,
+  setObservationCallback,
 } from '../src/transcriptParser.js';
 import type { AgentState } from '../src/types.js';
 
@@ -56,9 +48,15 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
-function toolUseRecord(toolId: string, name: string, input: Record<string, unknown>) {
+function toolUseRecord(
+  toolId: string,
+  name: string,
+  input: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+) {
   return JSON.stringify({
     type: 'assistant',
+    ...extra,
     message: { content: [{ type: 'tool_use', id: toolId, name, input }] },
   });
 }
@@ -79,148 +77,183 @@ function toolResultRecord(toolId: string, text: string, isError = false) {
   });
 }
 
-describe('call-log capture', () => {
+describe('observation events', () => {
   let agents: AgentStateStore;
-  let agent: AgentState;
-  let started: TaskCallStartInfo[];
-  let ended: TaskCallEndInfo[];
-  let background: TaskCallBackgroundInfo[];
+  let events: ObservationEvent[];
   const waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
   const permissionTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const line = (text: string) =>
+    processTranscriptLine(1, text, agents, waitingTimers, permissionTimers);
 
   beforeEach(() => {
     setHookProvider(claudeProvider);
     agents = new AgentStateStore();
-    agent = createTestAgent();
-    agents.set(1, agent);
-    started = [];
-    ended = [];
-    background = [];
-    setTaskCallStartedCallback((info) => started.push(info));
-    setTaskCallEndedCallback((info) => ended.push(info));
-    setTaskCallBackgroundCallback((info) => background.push(info));
+    agents.set(1, createTestAgent());
+    events = [];
+    setObservationCallback((event) => events.push(event));
     vi.useFakeTimers();
     return () => {
       vi.useRealTimers();
-      setTaskCallStartedCallback(null);
-      setTaskCallEndedCallback(null);
-      setTaskCallBackgroundCallback(null);
+      setObservationCallback(null);
     };
   });
 
-  it("captures a 'Task' tool call (older CLI builds) with its subagent_type, prompt and description", () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Task', {
-        subagent_type: 'skill-retriever',
-        prompt: 'Find skills for authentication',
-        description: 'Find skills',
-      }),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    expect(started).toEqual([
+  it.each(['Task', 'Agent'])(
+    'captures a %s delegation with a short description, never the prompt',
+    (tool) => {
+      line(
+        toolUseRecord(
+          'toolu_1',
+          tool,
+          {
+            subagent_type: 'skill-retriever',
+            prompt: 'Find skills for authentication\nwith a long second line of private detail',
+            description: 'Find skills',
+          },
+          { cwd: '/work/project' },
+        ),
+      );
+      expect(events).toEqual([
+        {
+          kind: 'delegateStart',
+          agentId: 1,
+          sessionId: 'parent-session-1',
+          toolUseId: 'toolu_1',
+          subagentType: 'skill-retriever',
+          description: 'Find skills',
+          promptHead: 'Find skills for authentication',
+          runInBackground: false,
+          cwd: '/work/project',
+        },
+      ]);
+      expect(JSON.stringify(events)).not.toContain('private detail');
+    },
+  );
+
+  it('ignores a spawn without subagent_type', () => {
+    line(toolUseRecord('toolu_1', 'Agent', { prompt: 'do it' }));
+    expect(events).toEqual([]);
+  });
+
+  it('records a named spawn as a teammate-to-be', () => {
+    line(toolUseRecord('toolu_1', 'Agent', { subagent_type: 'reviewer', name: 'rev-1' }));
+    expect(events[0]).toMatchObject({ kind: 'delegateStart', teammateName: 'rev-1' });
+  });
+
+  it('reports a real result as completed, and is_error as error', () => {
+    line(toolUseRecord('toolu_1', 'Task', { subagent_type: 'a' }));
+    line(toolUseRecord('toolu_2', 'Task', { subagent_type: 'b' }));
+    line(toolResultRecord('toolu_1', 'done'));
+    line(toolResultRecord('toolu_2', 'boom', true));
+    expect(events.filter((e) => e.kind === 'delegateResult')).toEqual([
       {
+        kind: 'delegateResult',
         agentId: 1,
-        parentSessionId: 'parent-session-1',
+        sessionId: 'parent-session-1',
         toolUseId: 'toolu_1',
-        subagentType: 'skill-retriever',
-        prompt: 'Find skills for authentication',
-        description: 'Find skills',
+        outcome: 'completed',
+      },
+      {
+        kind: 'delegateResult',
+        agentId: 1,
+        sessionId: 'parent-session-1',
+        toolUseId: 'toolu_2',
+        outcome: 'error',
       },
     ]);
   });
 
-  it("captures an 'Agent' tool call (current CLI builds) the same way", () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Agent', {
-        subagent_type: 'skill-retriever',
-        prompt: 'Find skills for authentication',
+  it('reports an async launch acknowledgment as async, not completed', () => {
+    line(toolUseRecord('toolu_1', 'Agent', { subagent_type: 'a' }));
+    line(toolResultRecord('toolu_1', 'Async agent launched successfully. agentId: abc123'));
+    const results = events.filter((e) => e.kind === 'delegateResult');
+    expect(results).toEqual([
+      {
+        kind: 'delegateResult',
+        agentId: 1,
+        sessionId: 'parent-session-1',
+        toolUseId: 'toolu_1',
+        outcome: 'async',
+      },
+    ]);
+  });
+
+  it('reports an implicit-team spawn result as a teammate start, not an end', () => {
+    line(toolUseRecord('toolu_1', 'Agent', { subagent_type: 'reviewer' }));
+    line(toolResultRecord('toolu_1', 'Spawned. agent_id: rev-1@session-abcdef12'));
+    const result = events.find((e) => e.kind === 'delegateResult');
+    expect(result).toMatchObject({ outcome: 'teammate', teammateName: 'rev-1' });
+  });
+
+  it('reports a queue-operation completion with its status', () => {
+    line(
+      JSON.stringify({
+        type: 'queue-operation',
+        operation: 'enqueue',
+        content:
+          '<task-notification><task-id>t</task-id><tool-use-id>toolu_9</tool-use-id><status>completed</status></task-notification>',
       }),
-      agents,
-      waitingTimers,
-      permissionTimers,
     );
-    expect(started).toHaveLength(1);
-    expect(started[0]!.subagentType).toBe('skill-retriever');
+    expect(events).toEqual([
+      {
+        kind: 'backgroundDone',
+        agentId: 1,
+        sessionId: 'parent-session-1',
+        toolUseId: 'toolu_9',
+        status: 'completed',
+      },
+    ]);
   });
 
-  it('does not capture an Agent spawn carrying a `name` (a teammate-to-be, not a bounded call)', () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Agent', {
-        name: 'wa-research',
-        subagent_type: 'general-purpose',
+  it('captures a Skill tool invocation', () => {
+    line(toolUseRecord('toolu_s', 'Skill', { skill: 'figma-ui' }, { cwd: '/work/design' }));
+    expect(events).toEqual([
+      {
+        kind: 'skillStart',
+        agentId: 1,
+        sessionId: 'parent-session-1',
+        invocationId: 'toolu_s',
+        skill: 'figma-ui',
+        via: 'tool',
+        cwd: '/work/design',
+      },
+    ]);
+  });
+
+  it('captures a slash-command skill invocation keyed by the record uuid', () => {
+    line(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'rec-1',
+        cwd: '/work/design',
+        message: {
+          content:
+            '<command-message>figma-ui is running…</command-message>\n<command-name>/figma-ui</command-name>\n<command-args>login page</command-args>',
+        },
       }),
-      agents,
-      waitingTimers,
-      permissionTimers,
     );
-    expect(started).toEqual([]);
-  });
-
-  it('ends a captured call on a normal tool_result, with isError from is_error', () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Agent', { subagent_type: 'skill-retriever' }),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    processTranscriptLine(
-      1,
-      toolResultRecord('toolu_1', 'Found 3 relevant skills.'),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    expect(ended).toEqual([
-      { agentId: 1, parentSessionId: 'parent-session-1', toolUseId: 'toolu_1', isError: false },
-    ]);
-    expect(background).toEqual([]);
-  });
-
-  it('marks a call background-not-tracked instead of ended when the result is an async launch acknowledgment', () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Agent', { subagent_type: 'skill-retriever' }),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    processTranscriptLine(
-      1,
-      toolResultRecord('toolu_1', 'Async agent launched successfully. agentId: abc123'),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    // Never both: an async launch ack must not also be reported as ended.
-    expect(ended).toEqual([]);
-    expect(background).toEqual([
-      { agentId: 1, parentSessionId: 'parent-session-1', toolUseId: 'toolu_1' },
+    expect(events).toEqual([
+      {
+        kind: 'skillStart',
+        agentId: 1,
+        sessionId: 'parent-session-1',
+        invocationId: 'rec-1',
+        skill: 'figma-ui',
+        via: 'slash',
+        cwd: '/work/design',
+      },
     ]);
   });
 
-  it('reports isError=true for a failed call', () => {
-    processTranscriptLine(
-      1,
-      toolUseRecord('toolu_1', 'Task', { subagent_type: 'skill-retriever' }),
-      agents,
-      waitingTimers,
-      permissionTimers,
+  it('ignores slash commands inside a sidechain', () => {
+    line(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'rec-2',
+        isSidechain: true,
+        message: { content: '<command-name>/figma-ui</command-name>' },
+      }),
     );
-    processTranscriptLine(
-      1,
-      toolResultRecord('toolu_1', 'Error: could not complete', true),
-      agents,
-      waitingTimers,
-      permissionTimers,
-    );
-    expect(ended).toEqual([
-      { agentId: 1, parentSessionId: 'parent-session-1', toolUseId: 'toolu_1', isError: true },
-    ]);
+    expect(events).toEqual([]);
   });
 });

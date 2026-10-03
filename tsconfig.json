@@ -18,9 +18,7 @@
 		"adapters/vscode",
 		"server/src",
 		"core/src",
-		"domain/src",
-		"storage/src",
-		"runtime/src"
+		"storage/src"
 	],
 	"exclude": [
 		"node_modules",

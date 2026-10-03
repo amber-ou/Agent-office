@@ -39,14 +39,10 @@ export type ServerMessage =
   | AreaMappingsLoaded
   | WorkspaceFolders
   | AgentDiagnostics
-  | OfficeState
-  | OfficeError
-  | AgentDetail
-  | ProjectDetail
-  | OutputContent
   | NativeAgentRoster
   | AgentCallLogSnapshot
-  | AgentCallUpdated;
+  | AgentCallUpdated
+  | DiscoveryConfigResult;
 
 export type ClientMessage =
   | WebviewReady
@@ -71,37 +67,8 @@ export type ClientMessage =
   | SaveAreaMappings
   | SetShowAreas
   | RequestDiagnostics
-  | RequestOffice
-  | CreateProject
-  | SetActiveProject
-  | CreateAgent
-  | AddAgentToProject
-  | RemoveAgentFromProject
-  | CreateTask
-  | RequestAgentDetail
-  | UpdateAgent
-  | CreateSkill
-  | UpdateSkill
-  | DeleteSkill
-  | CreateAgentKnowledge
-  | UpdateAgentKnowledge
-  | DeleteAgentKnowledge
-  | RequestProjectDetail
-  | UpdateProject
-  | CreateProjectKnowledge
-  | UpdateProjectKnowledge
-  | DeleteProjectKnowledge
-  | UpdateTask
-  | AssignTask
-  | UnassignTask
-  | SetTaskStatus
-  | DeleteTask
-  | RunTask
-  | CancelTaskRun
-  | RequestOutputContent
-  | AcceptTask
-  | RequestTaskChanges
-  | RequestCallLog;
+  | RequestCallLog
+  | SetDiscoveryConfig;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -356,193 +323,13 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
-export interface OfficeState {
-  type: 'officeState';
-  sessions?: OfficeSession[];
-  storage: OfficeStorageStatus;
-  projects: OfficeProject[];
-  agents: OfficeAgent[];
-  memberships: OfficeMembership[];
-  tasks: OfficeTask[];
-  activeProjectId?: string;
-}
-
-export interface OfficeSession {
-  id: string;
-  agentId: string;
-  projectId: string;
-  taskId?: string;
-  provider: string;
-  status: string;
-  startedAt: string;
-  endedAt?: string;
-  error?: string;
-  providerSessionId?: string;
-}
-
-export interface OfficeStorageStatus {
-  ready: boolean;
-  schemaVersion: number;
-  databasePath?: string;
-  error?: string;
-}
-
-export interface OfficeProject {
-  id: string;
-  name: string;
-  description: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OfficeAgent {
-  id: string;
-  name: string;
-  role: string;
-  description: string;
-  systemPrompt?: string;
-  provider: string;
-  model?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OfficeMembership {
-  id: string;
-  projectId: string;
-  agentId: string;
-  seatId?: string;
-}
-
-export interface OfficeTask {
-  id: string;
-  projectId: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  assignedAgentId?: string;
-  parentTaskId?: string;
-  dependencies: string[];
-  inputs: OfficeTaskInput[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OfficeTaskInput {
-  kind: string;
-  value?: string;
-  knowledgeId?: string;
-  outputId?: string;
-  path?: string;
-}
-
-export interface OfficeError {
-  type: 'officeError';
-  operation: string;
-  message: string;
-}
-
-export interface AgentDetail {
-  type: 'agentDetail';
-  fileBacked?: boolean;
-  configIssue?: string;
-  agent: OfficeAgent;
-  skills: OfficeSkill[];
-  knowledge: OfficeAgentKnowledge[];
-}
-
-export interface OfficeSkill {
-  id: string;
-  agentId: string;
-  slug: string;
-  name: string;
-  description: string;
-  kind: string;
-  requiredTools: string[];
-  content?: string;
-}
-
-export interface OfficeAgentKnowledge {
-  id: string;
-  agentId: string;
-  type: string;
-  title: string;
-  tags: string[];
-  content?: string;
-  contentReadable?: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProjectDetail {
-  type: 'projectDetail';
-  project: OfficeProjectDetail;
-  memberships: OfficeMembership[];
-  knowledge: OfficeProjectKnowledge[];
-  tasks: OfficeTask[];
-  sessions: OfficeSession[];
-  outputs: OfficeOutput[];
-  reviewNotes: OfficeReviewNote[];
-}
-
-export interface OfficeProjectDetail {
-  id: string;
-  name: string;
-  description: string;
-  status: string;
-  workspacePaths: string[];
-  defaultProvider?: string;
-  defaultModel?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OfficeProjectKnowledge {
-  id: string;
-  projectId: string;
-  type: string;
-  title: string;
-  tags: string[];
-  content?: string;
-  contentReadable?: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OfficeOutput {
-  id: string;
-  projectId: string;
-  taskId: string;
-  producedByAgentId: string;
-  sessionId?: string;
-  title: string;
-  type: string;
-  createdAt: string;
-}
-
-export interface OfficeReviewNote {
-  id: string;
-  taskId: string;
-  aboutSessionId?: string;
-  triggeredSessionId?: string;
-  author: string;
-  body: string;
-  createdAt: string;
-}
-
-export interface OutputContent {
-  type: 'outputContent';
-  outputId: string;
-  title?: string;
-  readable: boolean;
-  content?: string;
-}
-
 export interface NativeAgentRoster {
   type: 'nativeAgentRoster';
   agents: NativeAgentRosterEntry[];
+  candidates: NativeAgentRosterEntry[];
+  sources: DiscoverySource[];
+  problems: DiscoveryProblem[];
+  config: DiscoveryConfig;
   root: string;
 }
 
@@ -551,6 +338,33 @@ export interface NativeAgentRosterEntry {
   description: string;
   filePath: string;
   ambiguous: boolean;
+  kind: DefinitionKind;
+  scope: DiscoveryScope;
+  projectRoot?: string;
+}
+
+export type DefinitionKind = 'agent' | 'skill';
+
+export type DiscoveryScope = 'user' | 'project';
+
+export interface DiscoverySource {
+  kind: DefinitionKind;
+  scope: DiscoveryScope;
+  root: string;
+  projectRoot?: string;
+  exists: boolean;
+}
+
+export interface DiscoveryProblem {
+  filePath: string;
+  reason: string;
+}
+
+export interface DiscoveryConfig {
+  includeUserAgents: boolean;
+  includeUserSkills: boolean;
+  projectRoots: string[];
+  skillInclude: string[];
 }
 
 export interface AgentCallLogSnapshot {
@@ -563,21 +377,48 @@ export interface AgentCallLogEntry {
   agentName: string;
   agentFilePath?: string;
   recognized: boolean;
+  sourceKind?: DefinitionKind;
+  kind: AgentCallKind;
   parentSessionId: string;
   toolUseId: string;
+  teammateName?: string;
+  runId?: string;
+  activitySummary?: string;
   taskText?: string;
   taskDescription?: string;
   status: AgentCallStatus;
+  phase?: string;
+  evidenceSource?: EvidenceSource;
   startedAt?: string;
   startUnknown: boolean;
+  lastSeenAt?: string;
   endedAt?: string;
   usage?: AgentCallUsage;
   createdAt: string;
   updatedAt: string;
 }
 
+export type AgentCallKind = 'subagent' | 'background' | 'teammate' | 'skill';
+
 export type AgentCallStatus =
-  'running' | 'waiting_response' | 'ended' | 'failed' | 'unknown' | 'background_not_tracked';
+  | 'running'
+  | 'waiting_response'
+  | 'ended'
+  | 'failed'
+  | 'unknown'
+  | 'background_running'
+  | 'background_not_tracked';
+
+export type EvidenceSource =
+  | 'transcript'
+  | 'hook'
+  | 'queue_operation'
+  | 'team_config'
+  | 'session_end'
+  | 'turn_end'
+  | 'run_record'
+  | 'status_report'
+  | 'restart';
 
 export interface AgentCallUsage {
   inputTokens: number;
@@ -589,6 +430,13 @@ export interface AgentCallUsage {
 export interface AgentCallUpdated {
   type: 'agentCallUpdated';
   call: AgentCallLogEntry;
+}
+
+export interface DiscoveryConfigResult {
+  type: 'discoveryConfigResult';
+  ok: boolean;
+  config?: DiscoveryConfig;
+  error?: string;
 }
 
 export interface WebviewReady {
@@ -706,222 +554,11 @@ export interface RequestDiagnostics {
   type: 'requestDiagnostics';
 }
 
-export interface RequestOffice {
-  type: 'requestOffice';
-}
-
-export interface CreateProject {
-  type: 'createProject';
-  name: string;
-  description?: string;
-}
-
-export interface SetActiveProject {
-  type: 'setActiveProject';
-  projectId?: string;
-}
-
-export interface CreateAgent {
-  type: 'createAgent';
-  name: string;
-  role: string;
-  provider: string;
-  description?: string;
-  systemPrompt?: string;
-  model?: string;
-}
-
-export interface AddAgentToProject {
-  type: 'addAgentToProject';
-  projectId: string;
-  agentId: string;
-}
-
-export interface RemoveAgentFromProject {
-  type: 'removeAgentFromProject';
-  projectId: string;
-  agentId: string;
-}
-
-export interface CreateTask {
-  type: 'createTask';
-  projectId: string;
-  title: string;
-  description?: string;
-  assignedAgentId?: string;
-  priority?: string;
-  parentTaskId?: string;
-  dependencies?: string[];
-  inputs?: OfficeTaskInput[];
-}
-
-export interface RequestAgentDetail {
-  type: 'requestAgentDetail';
-  agentId?: string;
-}
-
-export interface UpdateAgent {
-  type: 'updateAgent';
-  agentId: string;
-  name?: string;
-  role?: string;
-  description?: string;
-  systemPrompt?: string;
-  model?: string;
-}
-
-export interface CreateSkill {
-  type: 'createSkill';
-  agentId: string;
-  slug: string;
-  name: string;
-  kind: string;
-  description?: string;
-  content?: string;
-  requiredTools?: string[];
-}
-
-export interface UpdateSkill {
-  type: 'updateSkill';
-  agentId: string;
-  skillId: string;
-  slug?: string;
-  name?: string;
-  kind?: string;
-  description?: string;
-  content?: string;
-  requiredTools?: string[];
-}
-
-export interface DeleteSkill {
-  type: 'deleteSkill';
-  agentId: string;
-  skillId: string;
-}
-
-export interface CreateAgentKnowledge {
-  type: 'createAgentKnowledge';
-  agentId: string;
-  title: string;
-  knowledgeType: string;
-  content: string;
-  tags?: string[];
-}
-
-export interface UpdateAgentKnowledge {
-  type: 'updateAgentKnowledge';
-  agentId: string;
-  knowledgeId: string;
-  title?: string;
-  knowledgeType?: string;
-  content?: string;
-  tags?: string[];
-}
-
-export interface DeleteAgentKnowledge {
-  type: 'deleteAgentKnowledge';
-  agentId: string;
-  knowledgeId: string;
-}
-
-export interface RequestProjectDetail {
-  type: 'requestProjectDetail';
-  projectId?: string;
-}
-
-export interface UpdateProject {
-  type: 'updateProject';
-  projectId: string;
-  name?: string;
-  description?: string;
-  status?: string;
-  workspacePaths?: string[];
-  defaultProvider?: string;
-  defaultModel?: string;
-}
-
-export interface CreateProjectKnowledge {
-  type: 'createProjectKnowledge';
-  projectId: string;
-  title: string;
-  knowledgeType: string;
-  content: string;
-  tags?: string[];
-}
-
-export interface UpdateProjectKnowledge {
-  type: 'updateProjectKnowledge';
-  knowledgeId: string;
-  title?: string;
-  knowledgeType?: string;
-  content?: string;
-  tags?: string[];
-}
-
-export interface DeleteProjectKnowledge {
-  type: 'deleteProjectKnowledge';
-  knowledgeId: string;
-}
-
-export interface UpdateTask {
-  type: 'updateTask';
-  taskId: string;
-  title?: string;
-  description?: string;
-  priority?: string;
-  parentTaskId?: string;
-  clearParentTask?: boolean;
-  dependencies?: string[];
-  inputs?: OfficeTaskInput[];
-}
-
-export interface AssignTask {
-  type: 'assignTask';
-  taskId: string;
-  agentId: string;
-}
-
-export interface UnassignTask {
-  type: 'unassignTask';
-  taskId: string;
-}
-
-export interface SetTaskStatus {
-  type: 'setTaskStatus';
-  taskId: string;
-  status: string;
-}
-
-export interface DeleteTask {
-  type: 'deleteTask';
-  taskId: string;
-}
-
-export interface RunTask {
-  type: 'runTask';
-  taskId: string;
-}
-
-export interface CancelTaskRun {
-  type: 'cancelTaskRun';
-}
-
-export interface RequestOutputContent {
-  type: 'requestOutputContent';
-  outputId: string;
-}
-
-export interface AcceptTask {
-  type: 'acceptTask';
-  taskId: string;
-}
-
-export interface RequestTaskChanges {
-  type: 'requestTaskChanges';
-  taskId: string;
-  feedback: string;
-}
-
 export interface RequestCallLog {
   type: 'requestCallLog';
+}
+
+export interface SetDiscoveryConfig {
+  type: 'setDiscoveryConfig';
+  config: DiscoveryConfig;
 }

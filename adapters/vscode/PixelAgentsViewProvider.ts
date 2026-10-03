@@ -34,10 +34,6 @@ import {
   setHooksEnabled as persistHooksEnabled,
   writeConfig,
 } from '../../server/src/configPersistence.js';
-import {
-  isOfficeClientMessage,
-  OfficeSession,
-} from '../../server/src/control/officeMessageHandler.js';
 import { setFolderNameResolver, setTerminalAdapter } from '../../server/src/fileWatcher.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
 import {
@@ -45,6 +41,10 @@ import {
   watchLayoutFile,
   writeLayoutToFile,
 } from '../../server/src/layoutPersistence.js';
+import {
+  handleSetDiscoveryConfig,
+  sendObservationSnapshot,
+} from '../../server/src/observationMessages.js';
 import { PathSet } from '../../server/src/pathKey.js';
 import type { ConsentEffects } from '../../server/src/providers/hook/consentExecutor.js';
 import { applyConsentChoice } from '../../server/src/providers/hook/consentExecutor.js';
@@ -58,15 +58,12 @@ import {
 import { PixelAgentsServer } from '../../server/src/server.js';
 import {
   getProjectDirPath,
-  launchNewTerminal,
   restoreAgents,
   sendCurrentAgentStatuses,
   sendExistingAgents,
   sendLayout,
 } from './agentManager.js';
 import {
-  CONFIG_KEY_AUTO_SHOW_PANEL,
-  CONFIG_KEY_AUTO_SPAWN_AGENT,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
   GLOBAL_KEY_GHOST_HEADLESS_AGENTS,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
@@ -116,7 +113,6 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // Auto-spawn guard: ensures the startup spawn fires at most once per VS Code
   // session, even though webviewReady fires on every panel focus.
-  private autoSpawnAttempted = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -420,42 +416,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
-    // One control-plane session per webview, matching the standalone socket.
-    const office = new OfficeSession();
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      // Agent Office control plane (projects, agents, memberships, tasks).
-      if (isOfficeClientMessage(message.type)) {
-        await office.handle(message, (m) => void webviewView.webview.postMessage(m));
-        return;
-      }
-      if (message.type === 'webviewReady') {
-        void office.initialState().then((state) => webviewView.webview.postMessage(state));
-        // Falls through: upstream's own webviewReady handling still runs.
-      }
+      // Agent Office is observation-only (docs/observation.md): the webview
+      // never launches a Claude session. A stale client's launchAgent is
+      // ignored rather than honored.
       if (message.type === 'launchAgent') {
-        const prevAgentIds = new Set(this.store.keys());
-        await launchNewTerminal(
-          this.store.nextAgentId,
-          this.store.nextTerminalIndex,
-          this.store,
-          this.runtime.activeAgentId,
-          this.runtime.knownJsonlFiles,
-          this.runtime.fileWatchers,
-          this.runtime.pollingTimers,
-          this.runtime.waitingTimers,
-          this.runtime.permissionTimers,
-          this.runtime.jsonlPollTimers,
-          this.runtime.projectScanTimer,
-          () => this.store.persist(),
-          message.folderPath as string | undefined,
-          message.bypassPermissions as boolean | undefined,
-        );
-        // Register newly created agent(s) with hook handler
-        for (const [id, agent] of this.store) {
-          if (!prevAgentIds.has(id)) {
-            this.runtime.registerAgent(agent.sessionId, id);
-          }
-        }
+        console.warn('[Agent Office] launchAgent ignored: the office does not start agents.');
       } else if (message.type === 'focusAgent') {
         const agent = this.store.get(message.id);
         if (agent) {
@@ -470,16 +436,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         }
       } else if (message.type === 'closeAgent') {
+        // Display-only: hide the character from the office. The agent's
+        // terminal is never disposed — the office must not control agents.
         const agent = this.store.get(message.id);
         if (agent) {
-          if (agent.terminalRef) {
-            agent.terminalRef.dispose();
-          } else {
-            // External agent -- remove from tracking and dismiss the file
-            // so the external scanner doesn't re-adopt it
-            this.runtime.dismissalTracker.dismiss(agent.jsonlFile);
-            this.runtime.removeAgent(message.id);
-          }
+          this.runtime.dismissalTracker.dismiss(agent.jsonlFile);
+          this.runtime.removeAgent(message.id);
         }
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
@@ -552,6 +514,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             this.runtime.removeAgent(id);
           }
         }
+      } else if (message.type === 'requestCallLog') {
+        sendObservationSnapshot((m) => void this.webview?.postMessage(m));
+      } else if (message.type === 'setDiscoveryConfig') {
+        // The VS Code webview is the extension's own surface — privileged.
+        handleSetDiscoveryConfig(
+          message,
+          (m) => void this.webview?.postMessage(m),
+          this.store,
+          true,
+        );
       } else if (message.type === 'webviewReady') {
         // Flush any messages buffered while the iframe was loading. Mark
         // ready BEFORE flush so re-entrant broadcasts (triggered by handlers
@@ -570,6 +542,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           readingTools: [...claudeProvider.readingTools],
           subagentToolNames: [...claudeProvider.subagentToolNames],
         });
+        // Agent Office observation: discovered roster + recent call log.
+        sendObservationSnapshot((m) => void this.webview?.postMessage(m));
 
         // Settings + folder→Area mappings MUST be dispatched BEFORE restoreAgents
         // and the auto-spawn path. Both paths emit `agentCreated` postMessages via
@@ -672,50 +646,6 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // Register all restored agents with hook handler
         for (const agent of this.store.values()) {
           this.runtime.registerAgent(agent.sessionId, agent.id);
-        }
-
-        // Auto-spawn: launch one agent on first webviewReady if the setting is
-        // enabled and no agents are currently running.
-        if (
-          !this.autoSpawnAttempted &&
-          vscode.workspace.getConfiguration().get<boolean>(CONFIG_KEY_AUTO_SPAWN_AGENT, false) &&
-          this.store.size === 0
-        ) {
-          this.autoSpawnAttempted = true;
-          console.log('[Pixel Agents] Auto-spawning agent on startup');
-          // When the user also opted into autoShowPanel, skip terminal.show()
-          // so the panel view stays on Pixel Agents. The terminal still runs;
-          // clicking the character focuses it via the focusAgent handler.
-          const autoShowPanel = vscode.workspace
-            .getConfiguration()
-            .get<boolean>(CONFIG_KEY_AUTO_SHOW_PANEL, false);
-          const prevAgentIds = new Set(this.store.keys());
-          await launchNewTerminal(
-            this.store.nextAgentId,
-            this.store.nextTerminalIndex,
-            this.store,
-            this.runtime.activeAgentId,
-            this.runtime.knownJsonlFiles,
-            this.runtime.fileWatchers,
-            this.runtime.pollingTimers,
-            this.runtime.waitingTimers,
-            this.runtime.permissionTimers,
-            this.runtime.jsonlPollTimers,
-            this.runtime.projectScanTimer,
-            () => this.store.persist(),
-            undefined,
-            undefined,
-            autoShowPanel,
-          );
-          for (const [id, agent] of this.store) {
-            if (!prevAgentIds.has(id)) {
-              this.runtime.registerAgent(agent.sessionId, id);
-            }
-          }
-        } else {
-          // Mark as attempted even when skipping, so subsequent panel focuses
-          // (which retrigger webviewReady) never auto-spawn unexpectedly.
-          this.autoSpawnAttempted = true;
         }
 
         // Send workspace folders to webview (only when multi-root)

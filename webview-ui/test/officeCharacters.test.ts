@@ -18,12 +18,18 @@ const rosterEntry = (
   description: '',
   filePath: `/home/user/.claude/agents/${name}.md`,
   ambiguous: false,
+  kind: 'agent',
+  scope: 'user',
   ...patch,
 });
 
 const roster = (agents: NativeAgentRosterEntry[]): NativeAgentRoster => ({
   type: 'nativeAgentRoster',
   agents,
+  candidates: [],
+  sources: [],
+  problems: [],
+  config: { includeUserAgents: true, includeUserSkills: true, projectRoots: [], skillInclude: [] },
   root: '/home/user/.claude/agents',
 });
 
@@ -37,6 +43,7 @@ const call = (
   agentName: agentEntry.name,
   agentFilePath: agentEntry.filePath,
   recognized: true,
+  kind: 'subagent',
   parentSessionId: 'parent-session',
   toolUseId: `tool-${nextCallId}`,
   status,
@@ -203,5 +210,74 @@ describe('Office residents are sourced from the CC native-agent roster', () => {
     residents.receive({ type: 'agentCallLogSnapshot', calls: [] });
     residents.sync(os, true);
     expect(os.characters.get(id)?.officeStatus).toBe('idle');
+  });
+});
+
+describe('observation-only residents: background work and dedup', () => {
+  it('shows a background_running call as working', () => {
+    const os = scene();
+    const retriever = rosterEntry('skill-retriever');
+    const residents = new OfficeCharacters();
+    residents.receive(roster([retriever]));
+    residents.receive({
+      type: 'agentCallLogSnapshot',
+      calls: [call(retriever, 'background_running', { kind: 'background' })],
+    });
+    const [id] = residents.sync(os, true);
+    expect(os.characters.get(id)!.officeStatus).toBe('working');
+    expect(os.characters.get(id)!.isActive).toBe(true);
+  });
+
+  it('hides the Subtask character of a recognized call while it is open, then restores it', () => {
+    const os = scene();
+    const retriever = rosterEntry('skill-retriever');
+    const residents = new OfficeCharacters();
+    residents.receive(roster([retriever]));
+    os.addAgent(1, 0, 0);
+    residents.receive({ type: 'agentCreated', id: 1, sessionId: 'parent-session' });
+    const subId = os.addSubagent(1, 'toolu_spawn');
+    const open = call(retriever, 'running', { toolUseId: 'toolu_spawn' });
+    residents.receive({ type: 'agentCallUpdated', call: open });
+    residents.sync(os, true);
+    expect(os.characters.get(subId)!.officeSuppressed).toBe(true);
+    expect(os.getCharacters().some((ch) => ch.id === subId)).toBe(false);
+
+    residents.receive({ type: 'agentCallUpdated', call: { ...open, status: 'ended' } });
+    residents.sync(os, true);
+    expect(os.characters.get(subId)!.officeSuppressed).toBe(false);
+  });
+
+  it('does not hide a Subtask from another session with the same tool id', () => {
+    const os = scene();
+    const retriever = rosterEntry('skill-retriever');
+    const residents = new OfficeCharacters();
+    residents.receive(roster([retriever]));
+    os.addAgent(2, 0, 0);
+    residents.receive({ type: 'agentCreated', id: 2, sessionId: 'other-session' });
+    const subId = os.addSubagent(2, 'toolu_spawn');
+    residents.receive({
+      type: 'agentCallUpdated',
+      call: call(retriever, 'running', { toolUseId: 'toolu_spawn' }),
+    });
+    residents.sync(os, true);
+    expect(os.characters.get(subId)!.officeSuppressed).toBeFalsy();
+  });
+
+  it('never hides anything for an unrecognized call', () => {
+    const os = scene();
+    const residents = new OfficeCharacters();
+    residents.receive(roster([]));
+    os.addAgent(1, 0, 0);
+    const subId = os.addSubagent(1, 'toolu_x');
+    residents.receive({
+      type: 'agentCallUpdated',
+      call: call(rosterEntry('general-purpose'), 'running', {
+        toolUseId: 'toolu_x',
+        recognized: false,
+        agentFilePath: undefined,
+      }),
+    });
+    residents.sync(os, true);
+    expect(os.characters.get(subId)!.officeSuppressed).toBeFalsy();
   });
 });

@@ -123,7 +123,7 @@ export function DebugView({
               transport.send({ type: 'closeAgent', id });
             }}
             className={`opacity-70 ${isSelected ? 'text-white' : ''}`}
-            title="Close agent"
+            title="Hide from office (does not close the agent)"
           >
             ✕
           </Button>

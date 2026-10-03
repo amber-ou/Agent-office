@@ -1,27 +1,32 @@
 /**
- * SQLite adapter for `AgentCallLogStore`. See `storage/src/callLog.ts` for
- * why this is a sibling table rather than a reuse of `tasks`/`agent_sessions`.
+ * SQLite adapter for `AgentCallLogStore`. See `storage/src/callLog.ts`.
  */
 
 import * as crypto from 'node:crypto';
 
 import type {
   AgentCall,
+  AgentCallKind,
   AgentCallLogStore,
   AgentCallStatus,
   AgentCallUsage,
+  AnnotateAgentCallInput,
   EndAgentCallInput,
+  EvidenceSource,
+  MarkStatusOptions,
   StartAgentCallInput,
 } from '../callLog.js';
-import type { Row, SqliteDatabase } from './database.js';
+import { OPEN_CALL_STATUSES } from '../callLog.js';
+import type { Param, Row, SqliteDatabase } from './database.js';
 
-const OPEN_STATUSES: readonly AgentCallStatus[] = ['running', 'waiting_response'];
-const TERMINAL_STATUSES: readonly AgentCallStatus[] = [
-  'ended',
-  'failed',
-  'unknown',
-  'background_not_tracked',
-];
+/** Statuses an `end()` may never overwrite. */
+const CONFIRMED_END_STATUSES: readonly AgentCallStatus[] = ['ended', 'failed'];
+/** Statuses `markStatus()` leaves alone unless `allowFromUnknown`. */
+const UNRESOLVED_STATUSES: readonly AgentCallStatus[] = ['unknown', 'background_not_tracked'];
+
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => '?').join(',');
+}
 
 export class SqliteAgentCallLogStore implements AgentCallLogStore {
   constructor(private readonly db: SqliteDatabase) {}
@@ -29,30 +34,31 @@ export class SqliteAgentCallLogStore implements AgentCallLogStore {
   async start(input: StartAgentCallInput): Promise<AgentCall> {
     const existing = await this.get(input.parentSessionId, input.toolUseId);
     if (existing) {
-      // Idempotent: a replayed/duplicated start event must not reset
-      // startedAt or create a second row for the same call.
       return existing;
     }
     const now = new Date().toISOString();
-    const id = crypto.randomUUID();
     this.db.run(
       `INSERT INTO agent_calls
-         (id, agent_name, agent_file_path, recognized, parent_session_id, tool_use_id,
-          task_text, task_description, status, started_at, start_unknown, ended_at,
-          usage_input_tokens, usage_output_tokens, usage_cache_creation_tokens, usage_cache_read_tokens,
+         (id, agent_name, agent_file_path, recognized, source_kind, kind,
+          parent_session_id, tool_use_id, teammate_name, activity_summary,
+          status, evidence_source, started_at, start_unknown, last_seen_at,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)`,
       [
-        id,
+        crypto.randomUUID(),
         input.agentName,
         input.agentFilePath ?? null,
         input.recognized ? 1 : 0,
+        input.sourceKind ?? null,
+        input.kind,
         input.parentSessionId,
         input.toolUseId,
-        input.taskText ?? null,
-        input.taskDescription ?? null,
+        input.teammateName ?? null,
+        input.activitySummary ?? null,
+        input.evidenceSource ?? 'transcript',
         input.startedAt ?? null,
         input.startedAt ? 0 : 1,
+        now,
         now,
         now,
       ],
@@ -68,28 +74,72 @@ export class SqliteAgentCallLogStore implements AgentCallLogStore {
     parentSessionId: string,
     toolUseId: string,
     status: AgentCallStatus,
+    options: MarkStatusOptions = {},
   ): Promise<void> {
+    const blocked: AgentCallStatus[] = [...CONFIRMED_END_STATUSES];
+    if (!options.allowFromUnknown) blocked.push(...UNRESOLVED_STATUSES);
+    const now = new Date().toISOString();
+    const sets = ['status = ?', 'updated_at = ?', 'last_seen_at = ?'];
+    const params: Param[] = [status, now, now];
+    if (options.evidenceSource) {
+      sets.push('evidence_source = ?');
+      params.push(options.evidenceSource);
+    }
+    if (options.phase !== undefined) {
+      sets.push('phase = ?');
+      params.push(options.phase);
+    }
     this.db.run(
-      `UPDATE agent_calls SET status = ?, updated_at = ?
+      `UPDATE agent_calls SET ${sets.join(', ')}
         WHERE parent_session_id = ? AND tool_use_id = ?
-          AND status NOT IN (${TERMINAL_STATUSES.map(() => '?').join(',')})`,
-      [status, new Date().toISOString(), parentSessionId, toolUseId, ...TERMINAL_STATUSES],
+          AND status NOT IN (${placeholders(blocked)})`,
+      [...params, parentSessionId, toolUseId, ...blocked],
     );
   }
 
   async end(input: EndAgentCallInput): Promise<void> {
+    const now = new Date().toISOString();
     this.db.run(
-      `UPDATE agent_calls SET status = ?, ended_at = ?, updated_at = ?
+      `UPDATE agent_calls
+          SET status = ?, ended_at = ?, evidence_source = ?, updated_at = ?, last_seen_at = ?
         WHERE parent_session_id = ? AND tool_use_id = ?
-          AND status NOT IN (${TERMINAL_STATUSES.map(() => '?').join(',')})`,
+          AND status NOT IN (${placeholders(CONFIRMED_END_STATUSES)})`,
       [
         input.status,
         input.endedAt,
-        new Date().toISOString(),
+        input.evidenceSource,
+        now,
+        now,
         input.parentSessionId,
         input.toolUseId,
-        ...TERMINAL_STATUSES,
+        ...CONFIRMED_END_STATUSES,
       ],
+    );
+  }
+
+  async annotate(
+    parentSessionId: string,
+    toolUseId: string,
+    input: AnnotateAgentCallInput,
+  ): Promise<void> {
+    const sets: string[] = [];
+    const params: Param[] = [];
+    const add = (column: string, value: string | undefined): void => {
+      if (value === undefined) return;
+      sets.push(`${column} = ?`);
+      params.push(value);
+    };
+    add('kind', input.kind);
+    add('teammate_name', input.teammateName);
+    add('run_id', input.runId);
+    add('phase', input.phase);
+    add('last_seen_at', input.lastSeenAt);
+    if (sets.length === 0) return;
+    sets.push('updated_at = ?');
+    params.push(new Date().toISOString());
+    this.db.run(
+      `UPDATE agent_calls SET ${sets.join(', ')} WHERE parent_session_id = ? AND tool_use_id = ?`,
+      [...params, parentSessionId, toolUseId],
     );
   }
 
@@ -123,6 +173,16 @@ export class SqliteAgentCallLogStore implements AgentCallLogStore {
       .map(toAgentCall);
   }
 
+  async listOpen(): Promise<AgentCall[]> {
+    return this.db
+      .all(
+        `SELECT * FROM agent_calls WHERE status IN (${placeholders(OPEN_CALL_STATUSES)})
+          ORDER BY COALESCE(started_at, created_at) DESC, id DESC`,
+        [...OPEN_CALL_STATUSES],
+      )
+      .map(toAgentCall);
+  }
+
   async get(parentSessionId: string, toolUseId: string): Promise<AgentCall | null> {
     const row = this.db.get(
       'SELECT * FROM agent_calls WHERE parent_session_id = ? AND tool_use_id = ?',
@@ -133,11 +193,17 @@ export class SqliteAgentCallLogStore implements AgentCallLogStore {
 
   async markOpenCallsUnknown(): Promise<number> {
     return this.db.run(
-      `UPDATE agent_calls SET status = 'unknown', updated_at = ?
-        WHERE status IN (${OPEN_STATUSES.map(() => '?').join(',')})`,
-      [new Date().toISOString(), ...OPEN_STATUSES],
+      `UPDATE agent_calls SET status = 'unknown', evidence_source = 'restart', updated_at = ?
+        WHERE status IN (${placeholders(OPEN_CALL_STATUSES)})`,
+      [new Date().toISOString(), ...OPEN_CALL_STATUSES],
     );
   }
+}
+
+function optional<K extends string>(key: K, value: Row[string]): Partial<Record<K, string>> {
+  return value === null || value === undefined
+    ? {}
+    : ({ [key]: String(value) } as Record<K, string>);
 }
 
 function toAgentCall(row: Row): AgentCall {
@@ -150,21 +216,30 @@ function toAgentCall(row: Row): AgentCall {
           cacheCreationTokens: Number(row['usage_cache_creation_tokens'] ?? 0),
           cacheReadTokens: Number(row['usage_cache_read_tokens'] ?? 0),
         };
+  const sourceKind = row['source_kind'];
   return {
     id: String(row['id']),
     agentName: String(row['agent_name']),
-    ...(row['agent_file_path'] === null ? {} : { agentFilePath: String(row['agent_file_path']) }),
+    ...optional('agentFilePath', row['agent_file_path']),
     recognized: Number(row['recognized']) === 1,
+    ...(sourceKind === 'agent' || sourceKind === 'skill' ? { sourceKind } : {}),
+    kind: String(row['kind'] ?? 'subagent') as AgentCallKind,
     parentSessionId: String(row['parent_session_id']),
     toolUseId: String(row['tool_use_id']),
-    ...(row['task_text'] === null ? {} : { taskText: String(row['task_text']) }),
-    ...(row['task_description'] === null
-      ? {}
-      : { taskDescription: String(row['task_description']) }),
+    ...optional('teammateName', row['teammate_name']),
+    ...optional('runId', row['run_id']),
+    ...optional('activitySummary', row['activity_summary']),
+    ...optional('taskText', row['task_text']),
+    ...optional('taskDescription', row['task_description']),
     status: String(row['status']) as AgentCallStatus,
-    ...(row['started_at'] === null ? {} : { startedAt: String(row['started_at']) }),
+    ...optional('phase', row['phase']),
+    ...(row['evidence_source'] === null || row['evidence_source'] === undefined
+      ? {}
+      : { evidenceSource: String(row['evidence_source']) as EvidenceSource }),
+    ...optional('startedAt', row['started_at']),
     startUnknown: Number(row['start_unknown']) === 1,
-    ...(row['ended_at'] === null ? {} : { endedAt: String(row['ended_at']) }),
+    ...optional('lastSeenAt', row['last_seen_at']),
+    ...optional('endedAt', row['ended_at']),
     ...(usage ? { usage } : {}),
     createdAt: String(row['created_at']),
     updatedAt: String(row['updated_at']),

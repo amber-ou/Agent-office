@@ -188,7 +188,10 @@ export function ToolOverlay({
           );
         }
 
-        if (ch.officeStatus) activityText = OFFICE_CHARACTER_LABELS[ch.officeStatus];
+        if (ch.officeStatus) {
+          activityText = OFFICE_CHARACTER_LABELS[ch.officeStatus];
+          if (ch.officeDetail) activityText += `・${ch.officeDetail.slice(0, 40)}`;
+        }
 
         // Determine dot color
         const tools = agentTools[id];
@@ -271,7 +274,8 @@ export function ToolOverlay({
                     e.stopPropagation();
                     onCloseAgent(id);
                   }}
-                  title="Close agent"
+                  title="從辦公室隱藏（不會關閉 Agent）"
+                  data-testid="hide-agent"
                   className="ml-2 shrink-0 leading-none"
                 >
                   ×

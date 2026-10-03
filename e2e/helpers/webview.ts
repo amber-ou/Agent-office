@@ -1,5 +1,6 @@
 import type { Frame, Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
+import crypto from 'crypto';
 
 /**
  * Settings/modal helpers work the same against a VS Code webview iframe
@@ -9,6 +10,10 @@ import { expect } from '@playwright/test';
 type WebviewSurface = Frame | Page;
 
 const WEBVIEW_TIMEOUT_MS = 30_000;
+/** Marks the Pixel Agents webview frame. Agent Office is observation-only —
+ *  there is no "+ Agent" launcher any more — so the always-present Layout
+ *  button identifies the frame instead. */
+const OFFICE_FRAME_MARKER = 'button[title="Edit office layout"]';
 const PANEL_OPEN_TIMEOUT_MS = 15_000;
 const MIN_PANEL_HEIGHT_PX = 320;
 
@@ -153,7 +158,7 @@ export async function closeBottomPanel(window: Page): Promise<void> {
         for (const frame of window.frames()) {
           if (!frame.url().startsWith('vscode-webview://')) continue;
           try {
-            if ((await frame.locator('button', { hasText: '+ Agent' }).count()) > 0) return true;
+            if ((await frame.locator(OFFICE_FRAME_MARKER).count()) > 0) return true;
           } catch {
             // Frame detached mid-check — treat as gone.
           }
@@ -202,7 +207,7 @@ async function findPixelAgentsFrameOnce(window: Page): Promise<Frame | null> {
     try {
       // count() resolves immediately (no waiting); a non-zero count means
       // this is the Pixel Agents frame.
-      const buttonCount = await frame.locator('button', { hasText: '+ Agent' }).count();
+      const buttonCount = await frame.locator(OFFICE_FRAME_MARKER).count();
       if (buttonCount === 0) continue;
       const frameElement = await frame.frameElement();
       const box = await frameElement.boundingBox();
@@ -389,7 +394,7 @@ export async function arrangeReviewLayout(window: Page): Promise<void> {
  *
  * VS Code renders WebviewViewProvider content in an <iframe> whose URL
  * starts with "vscode-webview://". Because VS Code can have multiple
- * webviews, we wait until one frame exposes the "+ Agent" button before
+ * webviews, we wait until one frame exposes the Layout button before
  * returning it.
  */
 export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
@@ -402,7 +407,7 @@ export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
         return foundFrame !== null;
       },
       {
-        message: 'Pixel Agents webview frame with "+ Agent" button not found',
+        message: 'Pixel Agents webview frame with the Layout button not found',
         timeout: WEBVIEW_TIMEOUT_MS,
         intervals: [250, 500, 1000],
       },
@@ -415,13 +420,36 @@ export async function getPixelAgentsFrame(window: Page): Promise<Frame> {
   return foundFrame;
 }
 
+let claudeTerminalCount = 0;
+
 /**
- * Click "+ Agent" in the webview and wait for the call to be dispatched.
+ * Start `claude` the way a person does: open a VS Code integrated terminal
+ * and run it there. Agent Office never launches agents itself (no "+ Agent"
+ * button); the extension adopts the session by observing its transcript.
+ * The terminal is renamed "Claude Code #N" so specs can still find its tab.
+ * In a multi-root window VS Code asks which folder the terminal starts in;
+ * `folderName` answers that pick.
  */
-export async function clickAddAgent(frame: Frame): Promise<void> {
-  const btn = frame.locator('button', { hasText: '+ Agent' });
-  await expect(btn).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
-  await btn.click();
+export async function startClaudeInTerminal(frame: Frame, folderName?: string): Promise<void> {
+  const window = frame.page();
+  claudeTerminalCount++;
+  await runCommand(window, 'Terminal: Create New Terminal');
+  if (folderName) {
+    const pick = window.locator('.quick-input-widget .quick-input-filter input');
+    await expect(pick).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+    await window.keyboard.type(folderName);
+    await window.keyboard.press('Enter');
+  }
+  await expect(window.locator('.terminal .xterm').last()).toBeVisible({
+    timeout: WEBVIEW_TIMEOUT_MS,
+  });
+  await runCommand(window, 'Terminal: Rename...');
+  await window.keyboard.press('Control+A');
+  await window.keyboard.type(`Claude Code #${claudeTerminalCount}`);
+  await window.keyboard.press('Enter');
+  await runCommand(window, 'Terminal: Focus Terminal');
+  await window.keyboard.type(`claude --session-id ${crypto.randomUUID()}`);
+  await window.keyboard.press('Enter');
 }
 
 async function setCheckbox(modal: Locator, label: string, checked: boolean): Promise<void> {

@@ -15,6 +15,7 @@ function call(status: AgentCallStatus, patch: Partial<AgentCallLogEntry> = {}): 
     agentName: 'skill-retriever',
     agentFilePath: '/home/user/.claude/agents/skill-retriever.md',
     recognized: true,
+    kind: 'subagent',
     parentSessionId: 'session',
     toolUseId: `tool-${n}`,
     status,
@@ -34,6 +35,13 @@ describe('deriveAgentState', () => {
   it('is idle when the only calls are terminal (ended/failed)', () => {
     const c = call('ended');
     expect(deriveAgentState([c])).toEqual({ status: 'idle' });
+  });
+
+  it('is working while a background call runs, and unknown (not idle) once it is unresolved', () => {
+    const bg = call('background_running', { kind: 'background' });
+    expect(deriveAgentState([bg])).toEqual({ status: 'working', currentCall: bg });
+    const lost = { ...bg, status: 'unknown' as const };
+    expect(deriveAgentState([lost])).toEqual({ status: 'unknown', currentCall: lost });
   });
 
   it('is working when a call is running', () => {
@@ -78,13 +86,13 @@ describe('computeAgentSummaries', () => {
     name: 'skill-retriever',
     description: 'Finds skills.',
     filePath: '/home/user/.claude/agents/skill-retriever.md',
-    ambiguous: false,
+    ambiguous: false, kind: 'agent', scope: 'user',
   };
   const writer: NativeAgentRosterEntry = {
     name: 'writer',
     description: '',
     filePath: '/home/user/.claude/agents/writer.md',
-    ambiguous: false,
+    ambiguous: false, kind: 'agent', scope: 'user',
   };
 
   it('lists every roster agent even with zero call history', () => {

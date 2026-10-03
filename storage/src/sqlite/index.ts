@@ -1,161 +1,111 @@
 /**
- * Opening the local SQLite store.
+ * Opening the local SQLite store — observation only.
  *
- * `openSqliteStorage()` is the whole entry point: it creates the data root if
- * it is missing, opens (or creates) the database file, migrates it to the
- * current schema, and returns the repositories plus a UnitOfWork over them.
+ * `openObservationStorage()` opens (or creates) `~/.agent-office/agent-office.db`,
+ * backs the file up if a schema migration is about to run on existing data,
+ * migrates it, and returns the call log. Nothing else: it does not create
+ * agent directories, run scratch space or blob trees, it does not migrate or
+ * import agent files, and it never touches `~/.claude`.
  *
- * A fresh database is an EMPTY one. Nothing is inserted at initialisation — no
- * agents, no skills, no knowledge, no projects, no prompts. Agent Office starts
- * empty and is filled by its operator.
+ * Tables written by earlier Agent Office versions (projects, agents, tasks,
+ * sessions, knowledge, outputs, review notes) are left in the file untouched.
+ * This build does not read them; removing a feature is not a reason to
+ * delete someone's data.
  */
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import type { Repositories, UnitOfWork } from '../../../domain/src/index.js';
-import type { AgentFileStore } from '../agentFiles.js';
 import type { AgentCallLogStore } from '../callLog.js';
-import { AGENTS_DIR_NAME, FileAgentStore } from '../files/fileAgentStore.js';
-import type { ReviewNoteStore } from '../reviewNotes.js';
-import type { AgentMigrationStore } from './agentMigrations.js';
-import { SqliteAgentMigrationStore } from './agentMigrations.js';
 import { SqliteAgentCallLogStore } from './callLog.js';
 import { SqliteDatabase } from './database.js';
-import { FileBlobStore } from './fileBlobStore.js';
 import type { Migration } from './migrations.js';
 import { LATEST_SCHEMA_VERSION, migrate } from './migrations.js';
-import {
-  SqliteAgentKnowledgeRepository,
-  SqliteAgentRepository,
-  SqliteAgentSessionRepository,
-  SqliteOutputRepository,
-  SqliteProjectAgentRepository,
-  SqliteProjectKnowledgeRepository,
-  SqliteProjectRepository,
-  SqliteSkillRepository,
-  SqliteTaskRepository,
-} from './repositories.js';
-import { SqliteReviewNoteStore } from './reviewNotes.js';
-import { SqliteUnitOfWork } from './unitOfWork.js';
 
 export const DEFAULT_DATA_DIR_NAME = '.agent-office';
 export const DATABASE_FILE_NAME = 'agent-office.db';
-export const BLOBS_DIR_NAME = 'blobs';
-/** Per-agent, per-task scratch: a run's own Claude config and working copy. */
-export const RUNTIME_DIR_NAME = 'runtime';
 
 /** `~/.agent-office` — deliberately separate from upstream's `~/.pixel-agents`. */
 export function defaultDataRoot(): string {
   return path.join(os.homedir(), DEFAULT_DATA_DIR_NAME);
 }
 
-export interface OpenSqliteStorageOptions {
-  /** Directory holding the database and the blob tree. Defaults to `~/.agent-office`. */
+export interface OpenObservationStorageOptions {
+  /** Directory holding the database. Defaults to `~/.agent-office`. */
   dataRoot?: string;
-  /**
-   * Override the database file path. `:memory:` gives an ephemeral database —
-   * useful for tests that want real SQL without touching disk. Blobs still need
-   * a directory, so `dataRoot` is used for those either way.
-   */
+  /** Override the database file path. `:memory:` gives an ephemeral database. */
   databasePath?: string;
+  /** Clock for the backup file name. Tests pin it. */
+  now?: () => Date;
 }
 
-export interface SqliteStorage {
-  repos: Repositories;
-  uow: UnitOfWork;
-  /**
-   * Human review notes. Beside the domain repositories rather than inside
-   * `Repositories`, because it is an application record and the frozen domain
-   * port stays as it is.
-   */
-  reviews: ReviewNoteStore;
-  /**
-   * Observed CC subagent calls — a sibling record, not part of `Repositories`
-   * (see `storage/src/callLog.ts` for why).
-   */
+export interface ObservationStorage {
   callLog: AgentCallLogStore;
-  /**
-   * Agent-owned files: instructions, skills and foundational knowledge. The
-   * authoritative source for those, once an agent has been migrated.
-   */
-  agentFiles: AgentFileStore;
-  /**
-   * Which agents have moved to files. Recorded here rather than only in the
-   * agent's directory, so a lost directory is damage rather than amnesia.
-   */
-  agentMigrations: AgentMigrationStore;
   db: SqliteDatabase;
-  /** Where the database, blobs, agent files and run scratch live. */
   dataRoot: string;
-  /** `<dataRoot>/runtime` — one directory per agent per task. */
-  runtimeRoot: string;
   databasePath: string;
   /** Schema version the file is at after opening. */
   schemaVersion: number;
   /** Migrations this call applied. Empty when the file was already current. */
   applied: readonly Migration[];
+  /** Where the pre-migration copy was written, when one was. */
+  backupPath?: string;
   close(): void;
 }
 
-export function openSqliteStorage(options: OpenSqliteStorageOptions = {}): SqliteStorage {
+/** `<db>.backup-v<from>-<stamp>` beside the database. Never overwrites. */
+function backupBeforeMigration(databasePath: string, fromVersion: number, now: Date): string {
+  const stamp = now.toISOString().replace(/[:.]/g, '-');
+  let candidate = `${databasePath}.backup-v${fromVersion}-${stamp}`;
+  let n = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = `${databasePath}.backup-v${fromVersion}-${stamp}-${n++}`;
+  }
+  // COPYFILE_EXCL: a backup is never silently replaced.
+  fs.copyFileSync(databasePath, candidate, fs.constants.COPYFILE_EXCL);
+  return candidate;
+}
+
+export function openObservationStorage(
+  options: OpenObservationStorageOptions = {},
+): ObservationStorage {
   const dataRoot = options.dataRoot ?? defaultDataRoot();
   const databasePath = options.databasePath ?? path.join(dataRoot, DATABASE_FILE_NAME);
-  const blobRoot = path.join(dataRoot, BLOBS_DIR_NAME);
-
-  fs.mkdirSync(dataRoot, { recursive: true });
-  fs.mkdirSync(blobRoot, { recursive: true });
-  if (databasePath !== ':memory:') {
+  const inMemory = databasePath === ':memory:';
+  if (!inMemory) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   }
 
   const db = new SqliteDatabase({ path: databasePath });
   let applied: readonly Migration[];
+  let backupPath: string | undefined;
   try {
+    const current = db.userVersion;
+    if (!inMemory && current > 0 && current < LATEST_SCHEMA_VERSION) {
+      // Existing data and a schema change ahead: copy the file first. Nothing
+      // has been written through this connection yet, so the copy is the
+      // file exactly as the previous version left it.
+      backupPath = backupBeforeMigration(
+        databasePath,
+        current,
+        (options.now ?? (() => new Date()))(),
+      );
+    }
     applied = migrate(db);
   } catch (error) {
     db.close();
     throw error;
   }
 
-  const blobs = new FileBlobStore(blobRoot);
-  blobs.restoreCounter();
-
-  // Agent files sit beside the database, in their own tree keyed by agent id.
-  const agentsRoot = path.join(dataRoot, AGENTS_DIR_NAME);
-  fs.mkdirSync(agentsRoot, { recursive: true });
-  const agentFiles = new FileAgentStore(agentsRoot);
-  const runtimeRoot = path.join(dataRoot, RUNTIME_DIR_NAME);
-  fs.mkdirSync(runtimeRoot, { recursive: true });
-
-  const repos: Repositories = {
-    projects: new SqliteProjectRepository(db),
-    agents: new SqliteAgentRepository(db),
-    projectAgents: new SqliteProjectAgentRepository(db),
-    sessions: new SqliteAgentSessionRepository(db),
-    tasks: new SqliteTaskRepository(db),
-    skills: new SqliteSkillRepository(db),
-    agentKnowledge: new SqliteAgentKnowledgeRepository(db),
-    projectKnowledge: new SqliteProjectKnowledgeRepository(db),
-    outputs: new SqliteOutputRepository(db),
-    blobs,
-  };
-
   return {
-    repos,
-    uow: new SqliteUnitOfWork(db, repos, blobs),
-    // Shares the connection, so a note joins whatever transaction is open.
-    reviews: new SqliteReviewNoteStore(db),
     callLog: new SqliteAgentCallLogStore(db),
-    agentFiles,
-    agentMigrations: new SqliteAgentMigrationStore(db),
     db,
     dataRoot,
-    runtimeRoot,
     databasePath,
     schemaVersion: LATEST_SCHEMA_VERSION,
     applied,
+    ...(backupPath ? { backupPath } : {}),
     close(): void {
       db.close();
     },
@@ -164,18 +114,5 @@ export function openSqliteStorage(options: OpenSqliteStorageOptions = {}): Sqlit
 
 export { SqliteAgentCallLogStore } from './callLog.js';
 export { SqliteDatabase } from './database.js';
-export { FileBlobStore } from './fileBlobStore.js';
 export type { Migration } from './migrations.js';
 export { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS } from './migrations.js';
-export {
-  SqliteAgentKnowledgeRepository,
-  SqliteAgentRepository,
-  SqliteAgentSessionRepository,
-  SqliteOutputRepository,
-  SqliteProjectAgentRepository,
-  SqliteProjectKnowledgeRepository,
-  SqliteProjectRepository,
-  SqliteSkillRepository,
-  SqliteTaskRepository,
-} from './repositories.js';
-export { SqliteUnitOfWork } from './unitOfWork.js';
