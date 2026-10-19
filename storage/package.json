@@ -10,6 +10,6 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "node-sqlite3-wasm": "^0.8.60"
+    "node-sqlite3-wasm": "^0.8.61"
   }
 }
